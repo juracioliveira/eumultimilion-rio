@@ -129,7 +129,7 @@ const start = () => {
         </div>
 
         <div v-else-if="step === 'done'" class="flex flex-col items-center py-6" aria-live="polite">
-          <div class="w-20 h-20 bg-accent-emerald/20 text-accent-emerald flex items-center justify-center rounded-full mb-6">
+          <div class="w-20 h-20 bg-accent-emerald/20 text-emerald-soft flex items-center justify-center rounded-full mb-6">
             <svg class="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
           </div>
           <h2 class="text-3xl font-display font-bold mb-4 text-white">Acesso liberado!</h2>

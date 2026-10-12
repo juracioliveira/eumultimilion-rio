@@ -76,7 +76,7 @@ const completedCount = computed(() => courses.value.filter((c) => c.status === '
         <div 
           class="flex items-center justify-center w-12 h-12 rounded-full border-2 glass-surface backdrop-blur-xl shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" 
           :class="[
-            course.status === 'completed' ? 'border-accent-emerald text-accent-emerald' : 
+            course.status === 'completed' ? 'border-accent-emerald text-emerald-soft' : 
             course.status === 'in_progress' ? 'border-accent-gold text-accent-gold' : 
             'border-white/10 text-text-muted'
           ]"
@@ -94,7 +94,7 @@ const completedCount = computed(() => courses.value.filter((c) => c.status === '
               
               <!-- Tag de Status -->
               <div class="mb-4">
-                <span v-if="course.status === 'completed'" class="text-accent-emerald text-xs font-bold flex items-center gap-1.5">
+                <span v-if="course.status === 'completed'" class="text-emerald-soft text-xs font-bold flex items-center gap-1.5">
                   <span class="w-2 h-2 rounded-full bg-accent-emerald shadow-[0_0_8px_rgba(46,111,94,0.8)]"></span>
                   Concluído
                 </span>
@@ -108,7 +108,7 @@ const completedCount = computed(() => courses.value.filter((c) => c.status === '
                 </span>
               </div>
               
-              <h3 class="font-display font-bold text-2xl mb-2 text-white">{{ course.title }}</h3>
+              <h2 class="font-display font-bold text-2xl mb-2 text-white">{{ course.title }}</h2>
               <p class="text-text-muted text-sm leading-relaxed mb-6">{{ course.description }}</p>
               
               <div v-if="course.status === 'locked'" class="inline-flex text-bg-base bg-accent-gold hover:brightness-110 px-5 py-2 rounded-full text-sm font-bold transition-all shadow-[0_0_20px_-5px_rgba(198,161,91,0.4)]">

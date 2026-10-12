@@ -1,12 +1,50 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useClipboard } from '@vueuse/core'
 import { api } from '../../lib/api'
+import { formatDate } from '../../lib/format'
+import { setTitle } from '../../lib/title'
 import SkeletonLoader from '../../components/ui/SkeletonLoader.vue'
+import Icon from '../../components/ui/Icon.vue'
+import { useUiStore } from '../../stores/ui'
+
+type Certificate = {
+  type: 'course' | 'learning_path'
+  contentTitle: string
+  issuedAt: string
+  pdfUrl: string | null
+  verificationCode: string
+  studentName: string
+}
 
 const route = useRoute()
+const ui = useUiStore()
 const code = route.params.code
-const certificate = ref<any>(null)
+const certificate = ref<Certificate | null>(null)
+const { copy, isSupported } = useClipboard()
+
+const pageUrl = computed(() => window.location.href)
+// "Adicionar certificação" no perfil do LinkedIn, já preenchido
+const linkedinUrl = computed(() => {
+  if (!certificate.value) return ''
+  const d = new Date(certificate.value.issuedAt)
+  const params = new URLSearchParams({
+    startTask: 'CERTIFICATION_NAME',
+    name: certificate.value.contentTitle,
+    organizationName: 'Multimilionário',
+    issueYear: String(d.getFullYear()),
+    issueMonth: String(d.getMonth() + 1),
+    certUrl: pageUrl.value,
+    certId: certificate.value.verificationCode,
+  })
+  return `https://www.linkedin.com/profile/add?${params}`
+})
+
+const copyLink = async () => {
+  await copy(pageUrl.value)
+  ui.toast('Link do certificado copiado')
+}
 const loading = ref(true)
 const error = ref('')
 
@@ -14,6 +52,7 @@ onMounted(async () => {
   try {
     const res = await api.get(`/certificates/${code}`)
     certificate.value = res.data.certificate
+    setTitle(`Certificado · ${res.data.certificate.contentTitle}`)
   } catch (e) {
     error.value = 'Certificado não encontrado ou código inválido.'
   } finally {
@@ -87,31 +126,32 @@ onMounted(async () => {
       
       <div class="bg-black/30 p-8 rounded-[24px] border border-white/5 relative z-10 mb-8 cert-data-appear">
         <div class="mb-6">
-          <span class="block text-text-muted text-sm font-semibold uppercase tracking-wider mb-1">Concluinte</span>
+          <span class="block text-text-muted text-sm mb-1">Concluinte</span>
           <span class="text-2xl font-bold text-white">{{ certificate.studentName }}</span>
         </div>
         <div class="mb-6">
-          <span class="block text-text-muted text-sm font-semibold uppercase tracking-wider mb-1">{{ certificate.type === 'course' ? 'Curso' : 'Trilha' }}</span>
+          <span class="block text-text-muted text-sm mb-1">{{ certificate.type === 'course' ? 'Curso' : 'Trilha' }}</span>
           <span class="text-2xl text-accent-gold font-bold">{{ certificate.contentTitle }}</span>
         </div>
         <div>
-          <span class="block text-text-muted text-sm font-semibold uppercase tracking-wider mb-1">Data de Emissão</span>
-          <span class="text-lg text-white">{{ new Date(certificate.issuedAt).toLocaleDateString('pt-BR') }}</span>
+          <span class="block text-text-muted text-sm mb-1">Emitido em</span>
+          <span class="text-lg text-white">{{ formatDate(certificate.issuedAt) }}</span>
         </div>
       </div>
       
       <div class="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6 cert-actions-appear">
         <div class="text-sm text-text-muted bg-black/20 px-4 py-2 rounded-lg border border-white/5">
-          <span class="font-semibold uppercase mr-2 text-xs">Código:</span>
+          <span class="mr-2 text-xs">Código</span>
           <span class="font-mono">{{ certificate.verificationCode }}</span>
         </div>
         
-        <a v-if="certificate.pdfUrl" :href="certificate.pdfUrl" target="_blank" rel="noopener" class="w-full md:w-auto bg-accent-gold text-bg-base hover:brightness-110 px-6 py-3 rounded-full font-bold focus-ring transition-colors flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(198,161,91,0.2)]">
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-          Baixar PDF Original
+        <a v-if="certificate.pdfUrl" :href="certificate.pdfUrl" target="_blank" rel="noopener" class="btn-gold w-full md:w-auto">
+          <Icon name="download" :size="18" /> Baixar PDF
         </a>
+      </div>
+      <div class="relative z-10 mt-4 flex flex-col sm:flex-row gap-2 cert-actions-appear">
+        <button v-if="isSupported" class="btn-glass flex-1" @click="copyLink"><Icon name="external" :size="16" /> Copiar link de validação</button>
+        <a :href="linkedinUrl" target="_blank" rel="noopener" class="btn-glass flex-1">Adicionar ao LinkedIn</a>
       </div>
     </div>
   </div>

@@ -3,13 +3,13 @@ import { asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { courses, learningPathCourses, learningPaths } from '../../db/schema.js';
-import { idParam, parse } from '../../lib/http.js';
+import { idParam, imageUrl, parse } from '../../lib/http.js';
 import { slugify } from '../../lib/slug.js';
 
 const pathInput = z.object({
   title: z.string().trim().min(2).max(255),
   description: z.string().trim().max(10000).nullable().optional(),
-  thumbnailUrl: z.string().trim().url().nullable().optional().or(z.literal('').transform(() => null)),
+  thumbnailUrl: imageUrl,
   published: z.boolean().optional(),
   courseIds: z.array(z.string().uuid()).optional(),
 });

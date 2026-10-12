@@ -3,24 +3,23 @@ import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { categories, courses, lessons, modules, purchases, quizzes } from '../../db/schema.js';
-import { idParam, parse } from '../../lib/http.js';
+import { idParam, imageUrl, optionalUrl, parse } from '../../lib/http.js';
 import { slugify } from '../../lib/slug.js';
 import { courseStats } from '../catalog.js';
 import { bunnyConfigured, createBunnyUpload } from '../../services/video.js';
 
 const nullableText = z.string().trim().max(10000).nullable().optional().transform((v) => (v === '' ? null : v));
-const nullableUrl = z.string().trim().url().nullable().optional().or(z.literal('').transform(() => null));
 
 const courseInput = z.object({
   title: z.string().trim().min(2).max(255),
   slug: z.string().trim().max(280).optional(),
   description: nullableText,
-  thumbnailUrl: nullableUrl,
+  thumbnailUrl: imageUrl,
   categoryId: z.string().uuid().nullable().optional(),
   priceCents: z.number().int().min(0),
   published: z.boolean().optional(),
   featured: z.boolean().optional(),
-  caktoCheckoutUrl: nullableUrl,
+  caktoCheckoutUrl: optionalUrl,
   caktoProductId: z.string().trim().max(100).nullable().optional().transform((v) => (v === '' ? null : v)),
 });
 
@@ -30,7 +29,7 @@ const lessonInput = z.object({
   title: z.string().trim().min(1).max(255),
   description: nullableText,
   content: z.string().max(200000).nullable().optional(),
-  videoUrl: nullableUrl,
+  videoUrl: optionalUrl,
   durationSeconds: z.number().int().min(0).nullable().optional(),
   isFreePreview: z.boolean().optional(),
   order: z.number().int().optional(),
@@ -68,7 +67,7 @@ export const adminCourseRoutes: FastifyPluginAsync = async (fastify) => {
         featured: courses.featured,
         updatedAt: courses.updatedAt,
         categoryName: categories.name,
-        students: sql<number>`(select count(*)::int from ${purchases} where ${purchases.courseId} = ${courses.id} and ${purchases.status} = 'paid')`,
+        students: sql<number>`(select count(*)::int from purchases p where p.course_id = courses.id and p.status = 'paid')`,
       })
       .from(courses)
       .leftJoin(categories, eq(courses.categoryId, categories.id))

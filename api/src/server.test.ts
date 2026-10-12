@@ -132,6 +132,24 @@ describe('admin', () => {
     assert.ok(stats.body.stats.sales >= 1);
   });
 
+  test('contagens agregadas por linha (trilhas, alunos por curso, cursos por aluno)', async () => {
+    const t = adminToken || (await adminLogin());
+    const paths = await call('GET', '/learning-paths', undefined, '');
+    const seeded = paths.body.paths.find((p: any) => p.slug === 'empreendedor-digital-iniciante');
+    const detail = await call('GET', `/learning-paths/${seeded.slug}`, undefined, '');
+    assert.equal(seeded.courseCount, detail.body.courses.length);
+
+    const students = await call('GET', `/admin/students?q=${encodeURIComponent(email)}`, undefined, t);
+    assert.equal(students.body.students[0].courses, 2, 'aluno do teste tem 2 cursos pagos');
+    assert.equal(students.body.students[0].certificates, 2);
+
+    const courses = await call('GET', '/admin/courses', undefined, t);
+    const free = courses.body.courses.find((c: any) => c.slug === 'mentalidade-milionaria');
+    const detailStudent = await call('GET', `/admin/students/${students.body.students[0].id}`, undefined, t);
+    assert.ok(detailStudent.body.enrollments.some((e: any) => e.courseId === free.id));
+    assert.ok(free.students >= 1);
+  });
+
   test('CRUD de curso, módulo e aula', async () => {
     const t = adminToken || (await adminLogin());
     const created = await call('POST', '/admin/courses', { title: 'Curso de Teste Ação', priceCents: 0 }, t);
@@ -148,6 +166,11 @@ describe('admin', () => {
     assert.equal(pub.body.modules[0].lessons[0].title, 'Aula 1');
     const asAdmin = await call('GET', `/player/lessons/${lesson.body.lesson.id}`, undefined, t);
     assert.equal(asAdmin.body.video.kind, 'embed');
+    // capa aceita caminho do próprio site; URL inválida volta com mensagem em português
+    assert.equal((await call('PATCH', `/admin/courses/${id}`, { thumbnailUrl: '/assets/capa.jpg' }, t)).status, 200);
+    const bad = await call('PATCH', `/admin/courses/${id}`, { thumbnailUrl: 'capa sem barra' }, t);
+    assert.equal(bad.status, 400);
+    assert.match(JSON.stringify(bad.body), /URL válida/);
     assert.equal((await call('DELETE', `/admin/courses/${id}`, undefined, t)).status, 200);
   });
 });

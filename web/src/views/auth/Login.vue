@@ -2,6 +2,8 @@
 import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import AuthShell from './AuthShell.vue'
+import PasswordInput from '../../components/ui/PasswordInput.vue'
+import Icon from '../../components/ui/Icon.vue'
 import { useAuthStore } from '../../stores/auth'
 import { apiError } from '../../lib/api'
 
@@ -33,14 +35,14 @@ const submit = async () => {
     <form class="space-y-5" @submit.prevent="submit">
       <div>
         <label class="field-label" for="email">E-mail</label>
-        <input id="email" v-model="email" type="email" autocomplete="email" required class="field">
+        <input id="email" v-model="email" type="email" autocomplete="email" inputmode="email" required autofocus class="field">
       </div>
       <div>
         <label class="field-label" for="password">Senha</label>
-        <input id="password" v-model="password" type="password" autocomplete="current-password" required class="field">
+        <PasswordInput id="password" v-model="password" autocomplete="current-password" required />
       </div>
-      <p v-if="error" role="alert" class="text-sm text-red-300">{{ error }}</p>
-      <button type="submit" class="btn-gold w-full !py-3" :disabled="loading">{{ loading ? 'Entrando…' : 'Entrar' }}</button>
+      <p v-if="error" role="alert" class="flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5"><Icon name="alert" :size="16" />{{ error }}</p>
+      <button type="submit" class="btn-gold w-full !py-3" :disabled="loading"><Icon v-if="loading" name="spinner" :size="16" />{{ loading ? 'Entrando…' : 'Entrar' }}</button>
     </form>
     <p class="mt-8 text-sm text-text-muted text-center">
       Ainda não tem conta?

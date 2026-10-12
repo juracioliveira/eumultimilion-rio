@@ -16,7 +16,8 @@ Não é um filtro estético — é uma regra de hierarquia: **conteúdo fica opa
 | `surface-glass` | `rgba(255,255,255,0.07)` + blur | nav, modais, player controls |
 | `border-glass` | `rgba(255,255,255,0.14)` | borda 1px das superfícies de vidro |
 | `accent-gold` | `#C6A15B` | CTA primário, estado "comprado/premium" — usar com moderação |
-| `accent-emerald` | `#2E6F5E` | sucesso: progresso concluído, certificado emitido, quiz aprovado |
+| `accent-emerald` | `#2E6F5E` | sucesso: progresso concluído, certificado emitido, quiz aprovado (preenchimentos, barras, selos) |
+| `emerald-soft` | `#6CC9A6` | o mesmo verde quando é **texto** sobre fundo escuro — o `#2E6F5E` não passa no contraste AA (fica em ~3:1) |
 | `text-primary` | `#F6F4EE` | texto sobre fundo escuro |
 | `text-muted` | `#9CA3AF` | metadados, legendas, timestamps |
 
@@ -37,3 +38,11 @@ O dourado é o único acento "de luxo" — reservado para CTA de compra e badges
 - `backdrop-filter: blur(20px)` + `background: rgba(255,255,255,0.07)` + `border: 1px solid rgba(255,255,255,0.14)` como classe utilitária `.glass-surface`, reaproveitada em nav, modal e player controls.
 - Respeitar `prefers-reduced-motion` em todas as transições de player/quiz/certificado.
 - Foco de teclado visível (outline dourado sutil) em todos os controles — acessibilidade não é opcional mesmo com vidro translúcido de fundo.
+
+## Padrões de interação já implementados
+- **Feedback:** avisos (toasts) para resultado de ações e diálogo de confirmação próprio (`useUiStore().confirm`) — nunca `window.confirm`/`alert`. O diálogo prende o foco, fecha com Esc e devolve o foco a quem o abriu.
+- **Player:** atalhos (espaço/K, ←/→ ou J/L = 10s, M, F, 0–9), velocidade de reprodução lembrada entre aulas, retomada de onde parou e contagem de 5s para a próxima aula (cancelável).
+- **Quiz:** contador de respondidas e envio em barra fixa; depois de enviar, revisão mostra a alternativa correta e a resposta do aluno em cada pergunta.
+- **Admin:** aviso de "alterações não salvas" e confirmação ao sair da página com edição pendente.
+- **Acessibilidade:** link "Pular para o conteúdo", título de aba por página, um único `<main>`, foco visível dourado. As telas principais passam sem violações no axe-core (WCAG 2 A/AA).
+- **Movimento:** nada de "revelar ao rolar" — o conteúdo nunca fica invisível esperando scroll.

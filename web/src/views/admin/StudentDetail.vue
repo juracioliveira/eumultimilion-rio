@@ -5,6 +5,7 @@ import GlassCard from '../../components/ui/GlassCard.vue'
 import { api, apiError } from '../../lib/api'
 import { formatDate, formatPrice } from '../../lib/format'
 import { useAuthStore } from '../../stores/auth'
+import { useUiStore } from '../../stores/ui'
 
 type Detail = {
   student: { id: string; name: string; email: string; role: 'admin' | 'student'; createdAt: string }
@@ -14,10 +15,10 @@ type Detail = {
 
 const route = useRoute()
 const auth = useAuthStore()
+const ui = useUiStore()
 const data = ref<Detail | null>(null)
 const courses = ref<{ id: string; title: string }[]>([])
 const grantCourseId = ref('')
-const error = ref('')
 const id = route.params.id as string
 
 const statusLabel: Record<string, string> = { paid: 'Ativo', pending: 'Aguardando pagamento', refunded: 'Reembolsado', canceled: 'Cancelado' }
@@ -32,21 +33,32 @@ onMounted(async () => {
 
 const available = computed(() => courses.value.filter((c) => !data.value?.enrollments.some((e) => e.courseId === c.id && e.status === 'paid')))
 
-const act = async (fn: () => Promise<unknown>) => {
-  error.value = ''
+const act = async (fn: () => Promise<unknown>, okMsg: string) => {
   try {
     await fn()
     await load()
+    ui.toast(okMsg)
   } catch (e) {
-    error.value = apiError(e)
+    ui.toast(apiError(e), 'error')
   }
 }
 
-const grant = () => grantCourseId.value && act(() => api.post(`/admin/students/${id}/grant`, { courseId: grantCourseId.value }).then(() => (grantCourseId.value = '')))
-const revoke = (courseId: string, title: string) => confirm(`Remover o acesso a "${title}"?`) && act(() => api.post(`/admin/students/${id}/revoke`, { courseId }))
-const toggleRole = () => {
+const grant = () =>
+  grantCourseId.value && act(() => api.post(`/admin/students/${id}/grant`, { courseId: grantCourseId.value }).then(() => (grantCourseId.value = '')), 'Acesso liberado')
+
+const revoke = async (courseId: string, title: string) => {
+  const ok = await ui.confirm({ title: `Remover o acesso a "${title}"?`, message: 'O progresso fica guardado caso o acesso seja liberado de novo.', confirmLabel: 'Remover acesso', danger: true })
+  if (ok) act(() => api.post(`/admin/students/${id}/revoke`, { courseId }), 'Acesso removido')
+}
+
+const toggleRole = async () => {
   const role = data.value?.student.role === 'admin' ? 'student' : 'admin'
-  if (confirm(role === 'admin' ? 'Dar acesso de administrador a este usuário?' : 'Remover o acesso de administrador?')) act(() => api.post(`/admin/students/${id}/role`, { role }))
+  const ok = await ui.confirm(
+    role === 'admin'
+      ? { title: 'Tornar administrador?', message: 'Esta pessoa poderá editar cursos, ver alunos e vendas.', confirmLabel: 'Tornar admin' }
+      : { title: 'Remover acesso de admin?', confirmLabel: 'Remover', danger: true },
+  )
+  if (ok) act(() => api.post(`/admin/students/${id}/role`, { role }), role === 'admin' ? 'Agora é administrador' : 'Acesso de admin removido')
 }
 </script>
 
@@ -58,7 +70,6 @@ const toggleRole = () => {
       <h1 class="text-3xl font-display font-black mt-1">{{ data.student.name }}</h1>
       <p class="text-text-muted">{{ data.student.email }} · desde {{ formatDate(data.student.createdAt) }}</p>
     </div>
-    <p v-if="error" role="alert" class="text-sm text-red-300">{{ error }}</p>
 
     <section>
       <h2 class="text-lg font-display font-bold mb-4">Cursos</h2>

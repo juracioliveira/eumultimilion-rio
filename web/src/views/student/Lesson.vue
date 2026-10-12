@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import HlsPlayer from '../../components/player/HlsPlayer.vue'
 import LessonContent from '../../components/LessonContent.vue'
 import { api, apiError, apiStatus } from '../../lib/api'
 import { formatClock } from '../../lib/format'
+import { setTitle } from '../../lib/title'
+import Icon from '../../components/ui/Icon.vue'
+import { useUiStore } from '../../stores/ui'
 import type { CourseDetail, VideoSource } from '../../lib/types'
 import { useAuthStore } from '../../stores/auth'
 
@@ -21,6 +24,7 @@ type LessonResponse = {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const ui = useUiStore()
 const data = ref<LessonResponse | null>(null)
 const outline = ref<CourseDetail | null>(null)
 const loading = ref(true)
@@ -29,17 +33,40 @@ const completed = ref(false)
 const saving = ref(false)
 const certificateCode = ref<string | null>(null)
 const sidebarOpen = ref(false)
-const error = ref('')
 let lastSync = 0
+
+// Contagem regressiva para a próxima aula ao terminar o vídeo
+const countdown = ref<number | null>(null)
+let countdownTimer: number | undefined
+const cancelCountdown = () => {
+  clearInterval(countdownTimer)
+  countdown.value = null
+}
+const goNext = () => {
+  cancelCountdown()
+  if (data.value?.navigation.nextLessonId) router.push(`/aula/${data.value.navigation.nextLessonId}`)
+}
+const onEnded = () => {
+  if (!data.value?.navigation.nextLessonId || certificateCode.value) return
+  countdown.value = 5
+  countdownTimer = window.setInterval(() => {
+    if (countdown.value === null) return
+    countdown.value -= 1
+    if (countdown.value <= 0) goNext()
+  }, 1000)
+}
+onBeforeUnmount(cancelCountdown)
 
 const load = async (lessonId: string) => {
   loading.value = true
+  cancelCountdown()
   blocked.value = null
   certificateCode.value = null
   sidebarOpen.value = false
   try {
     const res = await api.get<LessonResponse>(`/player/lessons/${lessonId}`)
     data.value = res.data
+    setTitle(`${res.data.lesson.title} · ${res.data.course.title}`)
     completed.value = res.data.progress.completed
     lastSync = res.data.progress.watchedSeconds
     if (!outline.value || outline.value.course.id !== res.data.course.id) {
@@ -85,6 +112,7 @@ const onProgress = async (watched: number, total: number) => {
     if (res.completed && !completed.value) {
       completed.value = true
       markOutline(true)
+      ui.toast('Aula concluída')
     }
     if (res.certificateCode) certificateCode.value = res.certificateCode
   } catch {
@@ -95,7 +123,6 @@ const onProgress = async (watched: number, total: number) => {
 const toggleComplete = async () => {
   if (!data.value) return
   saving.value = true
-  error.value = ''
   try {
     const { data: res } = await api.post<{ completed: boolean; certificateCode: string | null }>(
       `/player/lessons/${data.value.lesson.id}/complete`,
@@ -105,14 +132,20 @@ const toggleComplete = async () => {
     markOutline(res.completed)
     certificateCode.value = res.certificateCode
     if (res.completed && data.value.navigation.nextLessonId && !res.certificateCode) {
+      ui.toast('Aula concluída. Indo para a próxima.')
       router.push(`/aula/${data.value.navigation.nextLessonId}`)
+    } else if (!res.completed) {
+      ui.toast('Aula desmarcada', 'info')
     }
   } catch (e) {
-    error.value = apiError(e)
+    ui.toast(apiError(e), 'error')
   } finally {
     saving.value = false
   }
 }
+
+const flatLessons = computed(() => outline.value?.modules.flatMap((m) => m.lessons) ?? [])
+const nextLessonTitle = computed(() => flatLessons.value.find((l) => l.id === data.value?.navigation.nextLessonId)?.title ?? '')
 
 const courseDone = computed(() => outline.value && outline.value.modules.flatMap((m) => m.lessons).every((l) => l.completed))
 </script>
@@ -158,11 +191,19 @@ const courseDone = computed(() => outline.value && outline.value.modules.flatMap
     </div>
 
     <div v-else-if="data" class="lg:grid lg:grid-cols-[1fr_360px]">
-      <main class="min-w-0 px-4 md:px-8 py-6 md:py-8 max-w-5xl w-full mx-auto">
-        <div v-if="data.video.kind === 'hls' || data.video.kind === 'mp4'" class="rounded-3xl overflow-hidden shadow-[0_30px_60px_-15px_rgba(0,0,0,1)]">
-          <HlsPlayer :key="data.lesson.id" :src="data.video.url" :start-at="data.progress.watchedSeconds" @progress="onProgress" />
+      <div class="min-w-0 px-4 md:px-8 py-6 md:py-8 max-w-5xl w-full mx-auto">
+        <div v-if="data.video.kind === 'hls' || data.video.kind === 'mp4'" class="relative -mx-4 md:mx-0 md:rounded-3xl overflow-hidden shadow-[0_30px_60px_-15px_rgba(0,0,0,1)]">
+          <HlsPlayer :key="data.lesson.id" :src="data.video.url" :start-at="data.progress.watchedSeconds" @progress="onProgress" @ended="onEnded" />
+          <div v-if="countdown !== null" class="absolute inset-0 z-10 bg-black/80 flex flex-col items-center justify-center text-center p-6" role="dialog" aria-live="assertive" aria-label="Próxima aula">
+            <p class="text-sm text-white/70 mb-2">Próxima aula em {{ countdown }}s</p>
+            <p class="font-display font-bold text-xl md:text-2xl text-white mb-6 max-w-md text-balance">{{ nextLessonTitle }}</p>
+            <div class="flex gap-3">
+              <button class="btn-glass" @click="cancelCountdown">Cancelar</button>
+              <button class="btn-gold" @click="goNext"><Icon name="play" :size="14" /> Assistir agora</button>
+            </div>
+          </div>
         </div>
-        <div v-else-if="data.video.kind === 'embed'" class="aspect-video rounded-3xl overflow-hidden bg-black">
+        <div v-else-if="data.video.kind === 'embed'" class="-mx-4 md:mx-0 aspect-video md:rounded-3xl overflow-hidden bg-black">
           <iframe
             :key="data.lesson.id"
             :src="data.video.url"
@@ -182,7 +223,7 @@ const courseDone = computed(() => outline.value && outline.value.modules.flatMap
           <div v-if="canTrack" class="shrink-0">
             <button
               class="inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition focus-ring"
-              :class="completed ? 'bg-accent-emerald/20 text-accent-emerald border border-accent-emerald/40 hover:bg-accent-emerald/30' : 'btn-gold'"
+              :class="completed ? 'bg-accent-emerald/20 text-emerald-soft border border-accent-emerald/40 hover:bg-accent-emerald/30' : 'btn-gold'"
               :disabled="saving"
               @click="toggleComplete"
             >
@@ -194,7 +235,6 @@ const courseDone = computed(() => outline.value && outline.value.modules.flatMap
             <RouterLink :to="`/course/${data.course.slug}`" class="btn-gold">Amostra grátis · ver curso completo</RouterLink>
           </div>
         </div>
-        <p v-if="error" role="alert" class="text-sm text-red-300 mt-3">{{ error }}</p>
 
         <!-- Conquista: certificado emitido (dourado = conquista) -->
         <div v-if="certificateCode || (courseDone && canTrack)" class="mt-8 rounded-[28px] border border-accent-gold/40 bg-accent-gold/10 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4" aria-live="polite">
@@ -221,11 +261,11 @@ const courseDone = computed(() => outline.value && outline.value.modules.flatMap
         </article>
 
         <nav class="mt-12 pt-6 border-t border-white/10 flex justify-between gap-4" aria-label="Navegação entre aulas">
-          <RouterLink v-if="data.navigation.previousLessonId" :to="`/aula/${data.navigation.previousLessonId}`" class="btn-glass">Aula anterior</RouterLink>
+          <RouterLink v-if="data.navigation.previousLessonId" :to="`/aula/${data.navigation.previousLessonId}`" class="btn-glass"><Icon name="arrow-left" :size="16" /> Anterior</RouterLink>
           <span v-else></span>
-          <RouterLink v-if="data.navigation.nextLessonId" :to="`/aula/${data.navigation.nextLessonId}`" class="btn-glass">Próxima aula</RouterLink>
+          <RouterLink v-if="data.navigation.nextLessonId" :to="`/aula/${data.navigation.nextLessonId}`" class="btn-glass">Próxima <Icon name="arrow-right" :size="16" /></RouterLink>
         </nav>
-      </main>
+      </div>
 
       <!-- Lista de aulas -->
       <aside
@@ -236,7 +276,12 @@ const courseDone = computed(() => outline.value && outline.value.modules.flatMap
         <div class="p-5 flex items-center justify-between lg:block">
           <div>
             <p class="font-display font-bold">Conteúdo</p>
-            <p v-if="outline?.access.hasAccess" class="text-xs text-text-muted mt-1">{{ outline.progress.completed }} de {{ outline.progress.total }} concluídas</p>
+            <template v-if="outline?.access.hasAccess">
+              <p class="text-xs text-text-muted mt-1">{{ outline.progress.completed }} de {{ outline.progress.total }} concluídas</p>
+              <div class="mt-2 h-1 w-40 bg-white/10 rounded-full overflow-hidden" role="progressbar" :aria-valuenow="outline.progress.percent" aria-valuemin="0" aria-valuemax="100" aria-label="Progresso no curso">
+                <div class="h-full bg-accent-emerald rounded-full transition-[width] duration-500" :style="{ width: `${outline.progress.percent}%` }"></div>
+              </div>
+            </template>
           </div>
           <button class="lg:hidden p-2 rounded-full hover:bg-white/10" aria-label="Fechar" @click="sidebarOpen = false">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>

@@ -1,281 +1,427 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
-import Hls from 'hls.js';
-import { useEventListener } from '@vueuse/core';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import Hls from 'hls.js'
+import { onClickOutside, useEventListener } from '@vueuse/core'
+import Icon from '../ui/Icon.vue'
 
+/**
+ * Player de vídeo (HLS via hls.js, mp4 nativo).
+ * Controles em vidro sobre o vídeo; atalhos: espaço/K, ←/→ (10s), J/L, M, F, 0–9.
+ */
 const props = defineProps<{
-  src: string;
-  poster?: string;
+  src: string
+  poster?: string
   /** Segundos já assistidos — o vídeo retoma desse ponto. */
-  startAt?: number;
-}>();
+  startAt?: number
+}>()
 
 const emit = defineEmits<{
-  (e: 'progress', watchedSeconds: number, totalSeconds: number): void;
-  (e: 'ended'): void;
-}>();
+  (e: 'progress', watchedSeconds: number, totalSeconds: number): void
+  (e: 'ended'): void
+}>()
 
-const videoRef = ref<HTMLVideoElement | null>(null);
-const playerContainer = ref<HTMLDivElement | null>(null);
-let hlsInstance: Hls | null = null;
+const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2]
+const SPEED_KEY = 'player-speed'
 
-// Player State
-const isPlaying = ref(false);
-const currentTime = ref(0);
-const duration = ref(0);
-const isMuted = ref(false);
-const isFullscreen = ref(false);
-const showControls = ref(true);
-let controlsTimeout: number | null = null;
+const videoRef = ref<HTMLVideoElement | null>(null)
+const container = ref<HTMLDivElement | null>(null)
+const speedMenu = ref<HTMLDivElement | null>(null)
+let hls: Hls | null = null
 
-// Progress bar formatting
-const formatTime = (timeInSeconds: number) => {
-  if (isNaN(timeInSeconds)) return "00:00";
-  const m = Math.floor(timeInSeconds / 60).toString().padStart(2, '0');
-  const s = Math.floor(timeInSeconds % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
-};
+const isPlaying = ref(false)
+const currentTime = ref(0)
+const duration = ref(0)
+const buffered = ref(0)
+const isMuted = ref(false)
+const volume = ref(1)
+const isFullscreen = ref(false)
+const showControls = ref(true)
+const waiting = ref(false)
+const failed = ref(false)
+const speed = ref(readSpeed())
+const speedOpen = ref(false)
+const flash = ref<{ icon: 'play' | 'pause' | 'chevron-left' | 'chevron-right'; label?: string; id: number } | null>(null)
+let hideTimer: number | undefined
+let flashTimer: number | undefined
 
-const initPlayer = () => {
-  if (!videoRef.value || !props.src) return;
-
-  const isHls = /\.m3u8(\?|$)/i.test(props.src);
-  if (!isHls) {
-    if (hlsInstance) {
-      hlsInstance.destroy();
-      hlsInstance = null;
-    }
-    videoRef.value.src = props.src;
-    return;
+function readSpeed() {
+  try {
+    const v = Number(localStorage.getItem(SPEED_KEY))
+    return SPEEDS.includes(v) ? v : 1
+  } catch {
+    return 1
   }
+}
 
-  if (Hls.isSupported()) {
-    if (hlsInstance) {
-      hlsInstance.destroy();
-    }
-    
-    hlsInstance = new Hls({
-      maxMaxBufferLength: 30, // seconds
-    });
-    
-    hlsInstance.loadSource(props.src);
-    hlsInstance.attachMedia(videoRef.value);
-    
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-      // Ready to play
-    });
-  } else if (videoRef.value.canPlayType('application/vnd.apple.mpegurl')) {
-    // Safari fallback
-    videoRef.value.src = props.src;
+const fmt = (t: number) => {
+  if (!Number.isFinite(t)) return '0:00'
+  const h = Math.floor(t / 3600)
+  const m = Math.floor((t % 3600) / 60)
+  const s = Math.floor(t % 60).toString().padStart(2, '0')
+  return h ? `${h}:${m.toString().padStart(2, '0')}:${s}` : `${m}:${s}`
+}
+
+const playedPct = computed(() => (duration.value ? (currentTime.value / duration.value) * 100 : 0))
+const bufferedPct = computed(() => (duration.value ? (buffered.value / duration.value) * 100 : 0))
+
+const init = () => {
+  const video = videoRef.value
+  if (!video || !props.src) return
+  failed.value = false
+  hls?.destroy()
+  hls = null
+
+  if (!/\.m3u8(\?|$)/i.test(props.src)) {
+    video.src = props.src
+  } else if (Hls.isSupported()) {
+    hls = new Hls({ maxMaxBufferLength: 30 })
+    hls.loadSource(props.src)
+    hls.attachMedia(video)
+    hls.on(Hls.Events.ERROR, (_e, data) => {
+      if (data.fatal) failed.value = true
+    })
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = props.src // Safari
   }
-};
+  video.playbackRate = speed.value
+}
 
-watch(() => props.src, () => {
-  initPlayer();
-});
-
+watch(() => props.src, init)
 onMounted(() => {
-  initPlayer();
-  resetControlsTimeout();
-});
-
+  init()
+  revealControls()
+})
 onBeforeUnmount(() => {
-  if (hlsInstance) {
-    hlsInstance.destroy();
-  }
-  if (controlsTimeout) {
-    clearTimeout(controlsTimeout);
-  }
-});
+  hls?.destroy()
+  clearTimeout(hideTimer)
+  clearTimeout(flashTimer)
+})
 
-// Controls Logic
+// ---------- ações ----------
 const togglePlay = () => {
-  if (!videoRef.value) return;
-  if (videoRef.value.paused) {
-    videoRef.value.play();
-  } else {
-    videoRef.value.pause();
-  }
-};
+  const v = videoRef.value
+  if (!v || failed.value) return
+  if (v.paused) v.play().catch(() => {})
+  else v.pause()
+  showFlash(v.paused ? 'pause' : 'play')
+}
+
+const seekBy = (delta: number) => {
+  const v = videoRef.value
+  if (!v || !duration.value) return
+  v.currentTime = Math.min(Math.max(0, v.currentTime + delta), duration.value)
+  showFlash(delta < 0 ? 'chevron-left' : 'chevron-right', `${Math.abs(delta)}s`)
+}
+
+const seekTo = (e: Event) => {
+  if (videoRef.value) videoRef.value.currentTime = Number((e.target as HTMLInputElement).value)
+}
 
 const toggleMute = () => {
-  if (!videoRef.value) return;
-  videoRef.value.muted = !videoRef.value.muted;
-  isMuted.value = videoRef.value.muted;
-};
+  if (videoRef.value) videoRef.value.muted = !videoRef.value.muted
+}
+
+const setVolume = (e: Event) => {
+  const v = videoRef.value
+  if (!v) return
+  v.volume = Number((e.target as HTMLInputElement).value)
+  v.muted = v.volume === 0
+}
+
+const setSpeed = (s: number) => {
+  speed.value = s
+  if (videoRef.value) videoRef.value.playbackRate = s
+  try {
+    localStorage.setItem(SPEED_KEY, String(s))
+  } catch {
+    // preferência só vale nesta sessão
+  }
+  speedOpen.value = false
+}
+onClickOutside(speedMenu, () => (speedOpen.value = false))
 
 const toggleFullscreen = async () => {
-  if (!playerContainer.value) return;
-  
-  if (!document.fullscreenElement) {
-    await playerContainer.value.requestFullscreen().catch(err => {
-      console.error(`Error attempting to enable fullscreen: ${err.message}`);
-    });
-  } else {
-    document.exitFullscreen();
+  if (!container.value) return
+  if (document.fullscreenElement) await document.exitFullscreen()
+  else await container.value.requestFullscreen().catch(() => {})
+}
+
+const showFlash = (icon: NonNullable<typeof flash.value>['icon'], label?: string) => {
+  flash.value = { icon, label, id: Date.now() }
+  clearTimeout(flashTimer)
+  flashTimer = window.setTimeout(() => (flash.value = null), 600)
+}
+
+const revealControls = () => {
+  showControls.value = true
+  clearTimeout(hideTimer)
+  if (isPlaying.value && !speedOpen.value) hideTimer = window.setTimeout(() => (showControls.value = false), 2600)
+}
+
+// ---------- eventos do <video> ----------
+const onTimeUpdate = () => {
+  const v = videoRef.value
+  if (!v) return
+  currentTime.value = v.currentTime
+  if (v.buffered.length) buffered.value = v.buffered.end(v.buffered.length - 1)
+  emit('progress', v.currentTime, duration.value)
+}
+
+const onLoadedMetadata = () => {
+  const v = videoRef.value
+  if (!v) return
+  duration.value = v.duration
+  v.playbackRate = speed.value
+  if (props.startAt && props.startAt < v.duration - 5) v.currentTime = props.startAt
+}
+
+const onVolumeChange = () => {
+  const v = videoRef.value
+  if (!v) return
+  isMuted.value = v.muted
+  volume.value = v.volume
+}
+
+watch(isPlaying, revealControls)
+useEventListener(document, 'fullscreenchange', () => (isFullscreen.value = !!document.fullscreenElement))
+
+// ---------- teclado (só com o foco dentro do player) ----------
+const onKeydown = (e: KeyboardEvent) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return
+  const target = e.target as HTMLElement
+  const key = e.key.toLowerCase()
+  // sliders e botões tratam as próprias teclas
+  if (target.tagName === 'INPUT' && key.startsWith('arrow')) return
+  if (target.tagName === 'BUTTON' && (key === ' ' || key === 'enter')) return
+  const actions: Record<string, () => void> = {
+    ' ': togglePlay,
+    k: togglePlay,
+    arrowleft: () => seekBy(-10),
+    arrowright: () => seekBy(10),
+    j: () => seekBy(-10),
+    l: () => seekBy(10),
+    m: toggleMute,
+    f: toggleFullscreen,
   }
-};
-
-const handleTimeUpdate = () => {
-  if (!videoRef.value) return;
-  currentTime.value = videoRef.value.currentTime;
-  emit('progress', currentTime.value, duration.value);
-};
-
-const handleLoadedMetadata = () => {
-  if (!videoRef.value) return;
-  duration.value = videoRef.value.duration;
-  // retoma de onde parou (se não estiver praticamente no fim)
-  if (props.startAt && props.startAt < duration.value - 5) {
-    videoRef.value.currentTime = props.startAt;
+  if (actions[key]) {
+    e.preventDefault()
+    actions[key]!()
+    revealControls()
+  } else if (/^[0-9]$/.test(key) && duration.value && videoRef.value) {
+    videoRef.value.currentTime = (Number(key) / 10) * duration.value
+    revealControls()
   }
-};
-
-const handleSeek = (e: Event) => {
-  const target = e.target as HTMLInputElement;
-  const time = parseFloat(target.value);
-  if (videoRef.value) {
-    videoRef.value.currentTime = time;
-    currentTime.value = time;
-  }
-};
-
-const resetControlsTimeout = () => {
-  showControls.value = true;
-  if (controlsTimeout) clearTimeout(controlsTimeout);
-  
-  if (isPlaying.value) {
-    controlsTimeout = window.setTimeout(() => {
-      showControls.value = false;
-    }, 2500); // Hide after 2.5s of inactivity
-  }
-};
-
-// Event Listeners for DOM events
-useEventListener(document, 'fullscreenchange', () => {
-  isFullscreen.value = !!document.fullscreenElement;
-});
+}
 </script>
 
 <template>
-  <div 
-    ref="playerContainer"
-    class="relative w-full aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl group flex flex-col justify-center transition-all duration-300"
-    @mousemove="resetControlsTimeout"
-    @mouseleave="() => { if (isPlaying) showControls = false; }"
-    @click.self="togglePlay"
+  <div
+    ref="container"
+    class="player relative w-full aspect-video bg-black overflow-hidden select-none outline-none focus-visible:ring-2 focus-visible:ring-accent-gold/70"
+    :class="{ 'cursor-none': !showControls && isPlaying }"
+    tabindex="0"
+    role="region"
+    aria-label="Player de vídeo. Atalhos: espaço para reproduzir ou pausar, setas para voltar ou avançar 10 segundos, M para som, F para tela cheia."
+    @mousemove="revealControls"
+    @mouseleave="isPlaying && (showControls = false)"
+    @keydown="onKeydown"
+    @focusin="revealControls"
   >
-    <!-- Video Element -->
-    <video 
+    <video
       ref="videoRef"
-      class="w-full h-full object-contain cursor-pointer"
+      class="w-full h-full object-contain"
       :poster="poster"
       playsinline
       crossorigin="anonymous"
       @play="isPlaying = true"
       @pause="isPlaying = false"
-      @timeupdate="handleTimeUpdate"
-      @loadedmetadata="handleLoadedMetadata"
+      @waiting="waiting = true"
+      @playing="waiting = false"
+      @canplay="waiting = false"
+      @timeupdate="onTimeUpdate"
+      @progress="onTimeUpdate"
+      @loadedmetadata="onLoadedMetadata"
+      @volumechange="onVolumeChange"
       @ended="emit('ended')"
+      @error="failed = true"
       @click="togglePlay"
+      @dblclick="toggleFullscreen"
     ></video>
 
-    <!-- Overlay Gradient for better visibility of controls -->
-    <div 
-      class="absolute inset-0 pointer-events-none transition-opacity duration-500 bg-gradient-to-t from-black/80 via-transparent to-black/30"
+    <!-- erro -->
+    <div v-if="failed" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 text-center p-6">
+      <Icon name="alert" :size="28" class="text-white/60" />
+      <p class="text-white font-semibold">Não foi possível carregar o vídeo</p>
+      <p class="text-sm text-white/60 max-w-xs">Verifique sua conexão e tente novamente.</p>
+      <button class="btn-glass mt-2" @click="init">Tentar de novo</button>
+    </div>
+
+    <!-- carregando -->
+    <div v-else-if="waiting" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+      <Icon name="spinner" :size="40" class="text-white/80" />
+    </div>
+
+    <!-- feedback visual de atalho/clique -->
+    <Transition name="flash">
+      <div v-if="flash" :key="flash.id" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div class="glass-surface rounded-full w-20 h-20 flex flex-col items-center justify-center text-white">
+          <Icon :name="flash.icon" :size="26" />
+          <span v-if="flash.label" class="text-[11px] font-semibold mt-0.5">{{ flash.label }}</span>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- botão grande quando pausado -->
+    <button
+      v-if="!isPlaying && !failed && !waiting && !flash"
+      class="absolute inset-0 m-auto w-20 h-20 rounded-full glass-surface flex items-center justify-center text-white hover:bg-white/15 motion-safe:hover:scale-105 transition focus-ring"
+      :aria-label="currentTime > 0 ? 'Continuar' : 'Reproduzir'"
+      @click="togglePlay"
+    >
+      <Icon name="play" :size="30" class="ml-1" />
+    </button>
+
+    <div
+      class="absolute inset-x-0 top-0 p-4 md:p-6 flex justify-between items-start transition-opacity duration-300 pointer-events-none [&>*]:pointer-events-auto"
       :class="showControls ? 'opacity-100' : 'opacity-0'"
-    ></div>
-    
-    <!-- Big Play Button Overlay (when paused) -->
-    <div 
-      class="absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300"
-      :class="!isPlaying && showControls ? 'opacity-100' : 'opacity-0'"
     >
-      <button 
-        @click.stop="togglePlay"
-        class="glass-surface w-20 h-20 rounded-full flex items-center justify-center text-white pointer-events-auto hover:bg-white/10 hover:scale-105 transition-all focus-ring shadow-xl"
-      >
-        <svg class="w-10 h-10 ml-2" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-      </button>
+      <slot name="top-left" />
+      <slot name="top-right" />
     </div>
 
-    <!-- Top Bar (Back button, etc. could go here) -->
-    <div 
-      class="absolute top-0 left-0 right-0 p-6 flex justify-between items-start transition-transform duration-500"
-      :class="showControls ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0'"
+    <!-- controles -->
+    <div
+      v-if="!failed"
+      class="absolute inset-x-0 bottom-0 pt-16 px-3 pb-3 md:px-4 md:pb-4 bg-gradient-to-t from-black/80 via-black/30 to-transparent transition-opacity duration-300"
+      :class="showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'"
     >
-       <slot name="top-left"></slot>
-       <slot name="top-right"></slot>
-    </div>
+      <!-- barra de tempo -->
+      <div class="seekbar relative h-4 flex items-center group/seek mb-1">
+        <div class="track absolute inset-x-0 h-1 group-hover/seek:h-1.5 transition-all rounded-full bg-white/20 overflow-hidden pointer-events-none">
+          <div class="absolute inset-y-0 left-0 bg-white/30" :style="{ width: `${bufferedPct}%` }"></div>
+          <div class="absolute inset-y-0 left-0 bg-accent-gold" :style="{ width: `${playedPct}%` }"></div>
+        </div>
+        <div class="absolute w-3.5 h-3.5 rounded-full bg-white shadow pointer-events-none scale-0 group-hover/seek:scale-100 transition-transform" :style="{ left: `calc(${playedPct}% - 7px)` }"></div>
+        <input
+          type="range"
+          min="0"
+          :max="duration || 0"
+          step="0.1"
+          :value="currentTime"
+          aria-label="Posição do vídeo"
+          :aria-valuetext="`${fmt(currentTime)} de ${fmt(duration)}`"
+          class="seek absolute inset-0 w-full opacity-0 cursor-pointer"
+          @input="seekTo"
+        >
+      </div>
 
-    <!-- Bottom Controls -->
-    <div 
-      class="absolute bottom-0 left-0 right-0 p-4 transition-all duration-500 transform"
-      :class="showControls ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'"
-    >
-      <div class="glass-surface rounded-2xl p-4 flex flex-col gap-3">
-        <!-- Seek Bar -->
-        <div class="w-full relative h-2 group/scrubber cursor-pointer flex items-center">
-          <input 
-            type="range" 
-            min="0" 
-            :max="duration || 100" 
-            :value="currentTime"
-            @input="handleSeek"
-            aria-label="Posição do vídeo"
-            class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+      <div class="flex items-center gap-1 md:gap-2 text-white">
+        <button class="ctrl" :aria-label="isPlaying ? 'Pausar (K)' : 'Reproduzir (K)'" @click="togglePlay">
+          <Icon :name="isPlaying ? 'pause' : 'play'" :size="22" />
+        </button>
+        <button class="ctrl !w-auto px-1.5" aria-label="Voltar 10 segundos (J)" @click="seekBy(-10)">
+          <Icon name="chevron-left" :size="18" /><span class="text-[11px] font-bold -ml-0.5">10</span>
+        </button>
+        <button class="ctrl !w-auto px-1.5" aria-label="Avançar 10 segundos (L)" @click="seekBy(10)">
+          <span class="text-[11px] font-bold -mr-0.5">10</span><Icon name="chevron-right" :size="18" />
+        </button>
+
+        <div class="flex items-center group/vol">
+          <button class="ctrl" :aria-label="isMuted ? 'Ativar som (M)' : 'Silenciar (M)'" @click="toggleMute">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M11 5 6 9H2v6h4l5 4V5z" />
+              <path v-if="isMuted || volume === 0" d="m23 9-6 6m0-6 6 6" />
+              <path v-else d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" />
+            </svg>
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            :value="isMuted ? 0 : volume"
+            aria-label="Volume"
+            class="hidden md:block w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 focus:w-20 focus:opacity-100 transition-all accent-[#C6A15B]"
+            @input="setVolume"
           >
-          <div class="absolute inset-0 rounded-full bg-white/20 overflow-hidden pointer-events-none">
-            <div 
-              class="h-full bg-accent-gold transition-all duration-100"
-              :style="{ width: `${(currentTime / (duration || 1)) * 100}%` }"
-            ></div>
-          </div>
-          <div 
-            class="absolute h-4 w-4 bg-white rounded-full shadow z-10 pointer-events-none transition-transform duration-100 opacity-0 group-hover/scrubber:opacity-100 group-hover/scrubber:scale-125"
-            :style="{ left: `calc(${(currentTime / (duration || 1)) * 100}% - 8px)` }"
-          ></div>
         </div>
 
-        <!-- Buttons Row -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-4">
-            <!-- Play/Pause -->
-            <button @click="togglePlay" :aria-label="isPlaying ? 'Pausar' : 'Reproduzir'" class="text-white hover:text-accent-gold transition-colors focus-ring rounded-full p-1">
-              <svg v-if="!isPlaying" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-              <svg v-else class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-            </button>
-            
-            <!-- Mute/Unmute -->
-            <button @click="toggleMute" :aria-label="isMuted ? 'Ativar som' : 'Silenciar'" class="text-white hover:text-white/80 transition-colors focus-ring rounded-full p-1 group">
-              <svg v-if="isMuted" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                <path stroke-linecap="round" stroke-linejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-              </svg>
-              <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-              </svg>
-            </button>
-            
-            <!-- Time -->
-            <div class="text-sm font-medium text-white/90 tabular-nums">
-              {{ formatTime(currentTime) }} <span class="text-white/50 mx-1">/</span> {{ formatTime(duration) }}
-            </div>
-          </div>
+        <span class="text-xs md:text-sm tabular-nums text-white/85 ml-1 whitespace-nowrap">{{ fmt(currentTime) }} <span class="text-white/45">/ {{ fmt(duration) }}</span></span>
 
-          <div class="flex items-center gap-4">
-            <!-- Fullscreen -->
-            <button @click="toggleFullscreen" aria-label="Tela cheia" class="text-white hover:text-white/80 transition-colors focus-ring rounded-full p-1">
-              <svg v-if="!isFullscreen" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-              </svg>
-              <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 14h4v4m0-4l-5 5m11-1h4v4m0-4l5 5M4 10h4V6m0 4L3 5m11 5h4V6m0 4l5-5" />
-              </svg>
+        <div class="flex-1"></div>
+
+        <div ref="speedMenu" class="relative">
+          <button class="ctrl !w-auto px-2.5 text-sm font-semibold tabular-nums" :aria-expanded="speedOpen" aria-haspopup="menu" :aria-label="`Velocidade: ${speed}x`" @click="speedOpen = !speedOpen">
+            {{ speed }}x
+          </button>
+          <div v-if="speedOpen" role="menu" aria-label="Velocidade de reprodução" class="absolute bottom-full right-0 mb-2 w-32 rounded-xl bg-[#141823]/95 border border-white/10 py-1.5 shadow-xl backdrop-blur-xl">
+            <button
+              v-for="s in SPEEDS"
+              :key="s"
+              role="menuitemradio"
+              :aria-checked="s === speed"
+              class="w-full flex items-center justify-between px-3 py-1.5 text-sm hover:bg-white/10 focus:bg-white/10 outline-none"
+              :class="s === speed ? 'text-accent-gold font-semibold' : 'text-white/85'"
+              @click="setSpeed(s)"
+            >
+              {{ s === 1 ? 'Normal' : `${s}x` }}
+              <Icon v-if="s === speed" name="check" :size="14" />
             </button>
           </div>
         </div>
+
+        <button class="ctrl" :aria-label="isFullscreen ? 'Sair da tela cheia (F)' : 'Tela cheia (F)'" @click="toggleFullscreen">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path v-if="!isFullscreen" d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+            <path v-else d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+          </svg>
+        </button>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.ctrl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 9999px;
+  transition: background-color 0.15s ease;
+}
+.ctrl:hover {
+  background: rgb(255 255 255 / 0.12);
+}
+.ctrl:focus-visible {
+  outline: 2px solid var(--color-accent-gold);
+  outline-offset: 1px;
+}
+/* foco de teclado na barra de tempo fica visível mesmo com o input transparente */
+.seekbar:has(.seek:focus-visible) .track {
+  height: 0.375rem;
+  outline: 2px solid var(--color-accent-gold);
+  outline-offset: 3px;
+}
+.flash-enter-active {
+  transition: opacity 0.1s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.flash-leave-active {
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.flash-enter-from {
+  opacity: 0;
+  transform: scale(0.85);
+}
+.flash-leave-to {
+  opacity: 0;
+  transform: scale(1.1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash-enter-active,
+  .flash-leave-active {
+    transition: none;
+  }
+}
+</style>

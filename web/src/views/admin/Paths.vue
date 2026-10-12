@@ -2,6 +2,10 @@
 import { onMounted, ref } from 'vue'
 import GlassCard from '../../components/ui/GlassCard.vue'
 import { api, apiError } from '../../lib/api'
+import Icon from '../../components/ui/Icon.vue'
+import { useUiStore } from '../../stores/ui'
+
+const ui = useUiStore()
 
 type AdminPath = { id: string; title: string; slug: string; description: string | null; thumbnailUrl: string | null; published: boolean; courses: { id: string; title: string }[] }
 type Draft = { id?: string; title: string; description: string; thumbnailUrl: string; published: boolean; courseIds: string[] }
@@ -47,15 +51,18 @@ const save = async () => {
     else await api.post('/admin/learning-paths', payload)
     editing.value = null
     await load()
+    ui.toast('Trilha salva')
   } catch (e) {
     error.value = apiError(e)
   }
 }
 
 const remove = async (p: AdminPath) => {
-  if (!confirm(`Excluir a trilha "${p.title}"? Os cursos não são afetados.`)) return
+  const ok = await ui.confirm({ title: `Excluir a trilha "${p.title}"?`, message: 'Os cursos não são afetados.', confirmLabel: 'Excluir', danger: true })
+  if (!ok) return
   await api.delete(`/admin/learning-paths/${p.id}`)
   await load()
+  ui.toast('Trilha excluída')
 }
 </script>
 
@@ -91,9 +98,9 @@ const remove = async (p: AdminPath) => {
           <li v-for="(cid, i) in editing.courseIds" :key="cid" class="flex items-center gap-2 text-sm glass-surface rounded-xl px-3 py-2">
             <span class="w-6 text-text-muted tabular-nums">{{ i + 1 }}</span>
             <span class="flex-1 truncate">{{ titleOf(cid) }}</span>
-            <button class="p-1 rounded hover:bg-white/10 disabled:opacity-30" :disabled="i === 0" aria-label="Subir" @click="move(i, -1)">↑</button>
-            <button class="p-1 rounded hover:bg-white/10 disabled:opacity-30" :disabled="i === editing.courseIds.length - 1" aria-label="Descer" @click="move(i, 1)">↓</button>
-            <button class="p-1 rounded text-red-300 hover:bg-red-500/10" aria-label="Remover" @click="editing.courseIds.splice(i, 1)">✕</button>
+            <button class="icon-btn" :disabled="i === 0" aria-label="Subir" @click="move(i, -1)"><Icon name="chevron-up" :size="16" /></button>
+            <button class="icon-btn" :disabled="i === editing.courseIds.length - 1" aria-label="Descer" @click="move(i, 1)"><Icon name="chevron-down" :size="16" /></button>
+            <button class="icon-btn hover:!text-red-300" aria-label="Remover da trilha" @click="editing.courseIds.splice(i, 1)"><Icon name="x" :size="16" /></button>
           </li>
         </ol>
         <div class="flex gap-2">

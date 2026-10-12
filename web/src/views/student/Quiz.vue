@@ -4,6 +4,8 @@ import { RouterLink, useRoute } from 'vue-router'
 import GlassCard from '../../components/ui/GlassCard.vue'
 import SkeletonLoader from '../../components/ui/SkeletonLoader.vue'
 import { api, apiError } from '../../lib/api'
+import Icon from '../../components/ui/Icon.vue'
+import { setTitle } from '../../lib/title'
 
 type Question = { id: string; type: 'single_choice' | 'multiple_choice'; questionText: string; options: { id: string; optionText: string }[] }
 type QuizResponse = {
@@ -42,6 +44,7 @@ onMounted(async () => {
   try {
     const { data } = await api.get<QuizResponse>(`/quizzes/${route.params.quizId}`)
     quiz.value = data.quiz
+    setTitle(data.quiz.title)
     course.value = data.course
     questions.value = data.questions
     bestScore.value = data.attempts.length ? Math.max(...data.attempts.map((a) => a.scorePercent)) : null
@@ -60,6 +63,20 @@ const toggleOption = (questionId: string, optionId: string, isMultiple: boolean)
   } else {
     answers.value[questionId] = [optionId]
   }
+}
+
+const answeredCount = computed(() => questions.value.filter((q) => (answers.value[q.id] ?? []).length > 0).length)
+
+/** Estilo de cada alternativa: seleção durante o quiz; certo/errado na revisão. */
+const optionClass = (q: Question, optionId: string) => {
+  const selected = answers.value[q.id]?.includes(optionId)
+  if (result.value) {
+    const correct = result.value.results[q.id]?.correctOptionIds.includes(optionId)
+    if (correct) return 'border-accent-emerald/50 bg-accent-emerald/10'
+    if (selected) return 'border-red-400/40 bg-red-500/10'
+    return 'border-white/5 opacity-60'
+  }
+  return selected ? 'border-accent-gold/50 bg-accent-gold/[0.08] cursor-pointer' : 'border-white/10 hover:border-white/25 hover:bg-white/[0.04] cursor-pointer'
 }
 
 const areAllAnswered = computed(() => questions.value.length > 0 && questions.value.every((q) => (answers.value[q.id] ?? []).length > 0))
@@ -100,6 +117,7 @@ const submitQuiz = async () => {
       answers: questions.value.map((q) => ({ questionId: q.id, selectedOptionIds: answers.value[q.id] ?? [] })),
     })
     result.value = data
+    window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
     bestScore.value = Math.max(bestScore.value ?? 0, data.scorePercent)
     setTimeout(() => {
       animateScore(data.scorePercent)
@@ -126,188 +144,149 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- Background behind glass -->
-  <div class="min-h-screen bg-bg-base relative p-4 md:p-8 pt-24 pb-24">
-    <!-- Base Layer: Opaque Image -->
-    <div class="fixed inset-0 w-full h-full overflow-hidden">
-      <img src="/assets/hero_premium_bg_1788306655617.jpg" alt="Background" class="w-full h-full object-cover opacity-20">
-      <div class="absolute inset-0 bg-gradient-to-t from-bg-base via-bg-base/90 to-transparent"></div>
+  <div class="min-h-screen relative px-4 md:px-8 py-10 md:py-14 pb-32">
+    <div class="fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+      <img src="/assets/hero_premium_bg_1788306655617.jpg" alt="" class="w-full h-full object-cover opacity-15">
+      <div class="absolute inset-0 bg-gradient-to-t from-bg-base via-bg-base/90 to-bg-base/60"></div>
     </div>
 
-    <!-- Loading State with Skeletons -->
-    <div class="relative z-10 max-w-3xl mx-auto pt-10" v-if="loading">
-      <div class="mb-12 text-center space-y-4">
-        <SkeletonLoader variant="text" :lines="1" width="60%" class="mx-auto" />
+    <!-- carregando -->
+    <div v-if="loading" class="max-w-3xl mx-auto space-y-6" aria-busy="true">
+      <SkeletonLoader variant="text" :lines="1" width="60%" />
+      <GlassCard v-for="i in 2" :key="i" padding="lg">
         <SkeletonLoader variant="text" :lines="2" />
-      </div>
-      <div class="space-y-8">
-        <GlassCard v-for="i in 2" :key="i" padding="lg" class="shadow-xl">
-          <div class="flex items-start gap-4 mb-6">
-            <SkeletonLoader variant="circle" width="32px" height="32px" />
-            <SkeletonLoader variant="text" :lines="2" width="90%" />
+        <div class="mt-6 space-y-3"><div v-for="j in 3" :key="j" class="skeleton-shimmer h-14 rounded-xl"></div></div>
+      </GlassCard>
+    </div>
+
+    <div v-else-if="error && !quiz" class="max-w-md mx-auto text-center glass-surface rounded-[28px] p-10">
+      <p class="text-red-300">{{ error }}</p>
+      <RouterLink to="/my-courses" class="btn-glass mt-6">Voltar</RouterLink>
+    </div>
+
+    <div v-else-if="quiz" class="max-w-3xl mx-auto">
+      <RouterLink v-if="course" :to="`/course/${course.slug}`" class="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-white rounded focus-ring mb-6">
+        <Icon name="arrow-left" :size="16" /> {{ course.title }}
+      </RouterLink>
+
+      <!-- resultado -->
+      <Transition name="quiz-slide" mode="out-in">
+        <GlassCard v-if="result" key="result" padding="none" class="relative overflow-hidden text-center mb-10 result-appear">
+          <div v-if="result.passed" class="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+            <div
+              v-for="p in particles"
+              :key="p.id"
+              class="absolute rounded-full motion-safe:animate-[particle-float_2.5s_ease-out_forwards]"
+              :style="{ left: `${p.x}%`, top: `${p.y}%`, width: `${p.size}px`, height: `${p.size}px`, backgroundColor: p.color, animationDelay: `${p.delay}ms`, opacity: 0 }"
+            ></div>
           </div>
-          <div class="pl-12 space-y-3">
-            <div v-for="j in 3" :key="j" class="skeleton-shimmer h-14 rounded-xl"></div>
+          <div class="h-1 w-full" :class="result.passed ? 'bg-accent-emerald' : 'bg-red-500/80'"></div>
+          <div class="p-8 md:p-10 relative" role="status" aria-live="polite">
+            <div class="w-28 h-28 mx-auto relative mb-6">
+              <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90" aria-hidden="true">
+                <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="7" />
+                <circle v-if="animatedScore > 0" cx="50" cy="50" r="42" fill="none" :stroke="result.passed ? '#2E6F5E' : '#ef4444'" stroke-width="7" stroke-linecap="round" :stroke-dasharray="`${(animatedScore / 100) * 263.9} 263.9`" />
+              </svg>
+              <span class="absolute inset-0 flex items-center justify-center text-3xl font-display font-black tabular-nums">{{ animatedScore }}%</span>
+            </div>
+            <h1 class="text-3xl font-display font-black mb-2" :class="result.passed ? 'text-emerald-soft' : 'text-red-300'">
+              {{ result.passed ? 'Aprovado!' : 'Quase lá' }}
+            </h1>
+            <p class="text-white/75 max-w-md mx-auto">
+              Você acertou {{ result.correctCount }} de {{ result.total }}.
+              {{ result.passed ? 'Excelente trabalho!' : `A nota mínima é ${quiz.passingScorePercent}%. Revise as respostas abaixo e tente de novo.` }}
+            </p>
+            <div class="flex flex-col sm:flex-row gap-3 justify-center mt-8">
+              <button v-if="!result.passed" class="btn-gold" @click="resetQuiz">Tentar novamente</button>
+              <RouterLink v-if="result.certificateCode" :to="`/certificados/${result.certificateCode}`" class="btn-gold"><Icon name="award" :size="16" /> Ver meu certificado</RouterLink>
+              <RouterLink :to="course ? `/course/${course.slug}` : '/my-courses'" :class="result.passed && !result.certificateCode ? 'btn-gold' : 'btn-glass'">Voltar ao curso</RouterLink>
+            </div>
           </div>
         </GlassCard>
-      </div>
-    </div>
-    
-    <!-- Quiz Questions -->
-    <Transition name="quiz-slide" mode="out-in">
-      <div class="relative z-10 max-w-md mx-auto text-center glass-surface rounded-[28px] p-10" v-if="error && !quiz" key="error">
-        <p class="text-red-300">{{ error }}</p>
-        <RouterLink to="/my-courses" class="btn-glass mt-6">Voltar</RouterLink>
-      </div>
-      <div class="relative z-10 max-w-3xl mx-auto fade-in-up" v-else-if="quiz && !result && !loading" key="questions">
-        
-        <div class="mb-12 text-center">
-          <h1 class="text-4xl md:text-5xl font-display font-black mb-4 text-white">{{ quiz.title }}</h1>
-          <p v-if="quiz.description" class="text-lg text-text-muted leading-relaxed">{{ quiz.description }}</p>
-          <p class="text-sm text-text-muted mt-3">
-            Nota mínima: {{ quiz.passingScorePercent }}%<template v-if="bestScore !== null"> · sua melhor nota: {{ bestScore }}%</template>
-          </p>
-        </div>
 
-        <div class="space-y-8">
-          <GlassCard 
-            v-for="(q, index) in questions" :key="q.id" 
-            padding="lg"
-            class="shadow-xl"
+        <header v-else key="intro" class="mb-8">
+          <p v-if="!/^(prova final|quiz)/i.test(quiz.title)" class="text-sm font-semibold text-accent-gold mb-2">{{ quiz.context === 'course' ? 'Prova final' : 'Quiz da aula' }}</p>
+          <h1 class="text-3xl md:text-4xl font-display font-black leading-tight text-balance">{{ quiz.title }}</h1>
+          <p v-if="quiz.description" class="text-white/70 mt-3 leading-relaxed">{{ quiz.description }}</p>
+          <p class="text-sm text-text-muted mt-3">
+            {{ questions.length }} {{ questions.length === 1 ? 'pergunta' : 'perguntas' }} · nota mínima {{ quiz.passingScorePercent }}%<template v-if="bestScore !== null"> · sua melhor nota: {{ bestScore }}%</template>
+          </p>
+        </header>
+      </Transition>
+
+      <h2 v-if="result" class="text-xl font-display font-bold mb-4">Revisão das respostas</h2>
+
+      <ol class="space-y-5">
+        <li v-for="(q, index) in questions" :key="q.id">
+          <fieldset
+            class="rounded-[24px] border p-5 md:p-7 transition-colors"
+            :class="result ? (result.results[q.id]?.correct ? 'border-accent-emerald/40 bg-accent-emerald/[0.05]' : 'border-red-400/30 bg-red-500/[0.04]') : 'border-white/10 bg-white/[0.03]'"
+            :disabled="!!result"
           >
-            <h3 class="font-display font-bold text-xl mb-6 flex items-start gap-4 text-white">
-              <span class="flex items-center justify-center w-8 h-8 rounded-full bg-accent-gold/20 text-accent-gold shrink-0 text-sm mt-0.5">{{ index + 1 }}</span>
-              <span>{{ q.questionText }}<span v-if="q.type === 'multiple_choice'" class="block text-sm font-normal text-text-muted mt-1">Marque todas as corretas</span></span>
-            </h3>
-            
-            <div class="space-y-3 pl-12">
-              <label 
-                v-for="opt in q.options" :key="opt.id" 
-                class="flex items-center space-x-4 cursor-pointer p-4 rounded-xl transition-all duration-200 border group"
-                :class="answers[q.id]?.includes(opt.id) ? 'bg-white/10 border-accent-gold/30 scale-[1.01]' : 'hover:bg-white/5 border-white/5'"
+            <legend class="sr-only">Pergunta {{ index + 1 }}</legend>
+            <div class="flex items-start gap-4 mb-5">
+              <span
+                class="flex items-center justify-center w-8 h-8 rounded-full shrink-0 text-sm font-bold"
+                :class="result ? (result.results[q.id]?.correct ? 'bg-accent-emerald text-white' : 'bg-red-500/80 text-white') : 'bg-accent-gold/15 text-accent-gold'"
               >
-                <input 
+                <Icon v-if="result" :name="result.results[q.id]?.correct ? 'check' : 'x'" :size="16" />
+                <template v-else>{{ index + 1 }}</template>
+              </span>
+              <div>
+                <p class="font-display font-bold text-lg md:text-xl text-white leading-snug">{{ q.questionText }}</p>
+                <p v-if="q.type === 'multiple_choice'" class="text-sm text-text-muted mt-1">Marque todas as corretas</p>
+              </div>
+            </div>
+
+            <div class="space-y-2.5 md:pl-12" :role="q.type === 'multiple_choice' ? 'group' : 'radiogroup'">
+              <label
+                v-for="opt in q.options"
+                :key="opt.id"
+                class="option flex items-center gap-3.5 p-3.5 md:p-4 rounded-xl border transition-all"
+                :class="optionClass(q, opt.id)"
+              >
+                <input
                   :type="q.type === 'multiple_choice' ? 'checkbox' : 'radio'"
                   :name="`q_${q.id}`"
                   :value="opt.id"
                   :checked="answers[q.id]?.includes(opt.id)"
+                  class="sr-only peer"
                   @change="toggleOption(q.id, opt.id, q.type === 'multiple_choice')"
-                  class="w-5 h-5 text-accent-gold bg-black/50 border-white/20 focus-ring transition-colors cursor-pointer"
                 >
-                <span class="text-text-primary leading-relaxed group-hover:text-white transition-colors">{{ opt.optionText }}</span>
+                <span
+                  class="indicator w-5 h-5 shrink-0 flex items-center justify-center border-2 transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent-gold peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-bg-base"
+                  :class="[q.type === 'multiple_choice' ? 'rounded-md' : 'rounded-full', answers[q.id]?.includes(opt.id) ? 'border-accent-gold bg-accent-gold text-bg-base' : 'border-white/30']"
+                  aria-hidden="true"
+                >
+                  <Icon v-if="answers[q.id]?.includes(opt.id) && q.type === 'multiple_choice'" name="check" :size="12" />
+                  <span v-else-if="answers[q.id]?.includes(opt.id)" class="w-2 h-2 rounded-full bg-bg-base"></span>
+                </span>
+                <span class="flex-1 text-white/90 leading-relaxed">{{ opt.optionText }}</span>
+                <span v-if="result && result.results[q.id]?.correctOptionIds.includes(opt.id)" class="text-xs font-semibold text-emerald-soft flex items-center gap-1"><Icon name="check" :size="14" />Correta</span>
+                <span v-else-if="result && answers[q.id]?.includes(opt.id)" class="text-xs font-semibold text-red-300">Sua resposta</span>
               </label>
             </div>
-          </GlassCard>
-        </div>
+          </fieldset>
+        </li>
+      </ol>
+    </div>
 
-        <p v-if="error" role="alert" class="mt-8 text-center text-red-300">{{ error }}</p>
-        <div class="mt-12 flex justify-center">
-          <button 
-            @click="submitQuiz" 
-            :disabled="submitting || !areAllAnswered"
-            class="bg-accent-gold text-bg-base px-12 py-4 rounded-full font-bold text-lg focus-ring hover:brightness-110 transition-all shadow-[0_0_30px_-10px_rgba(198,161,91,0.5)] disabled:opacity-50 flex items-center justify-center min-w-[280px]"
-          >
-            <template v-if="submitting">
-              <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-bg-base" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Corrigindo...
-            </template>
-            <template v-else-if="!areAllAnswered">
-              Responda todas as questões
-            </template>
-            <template v-else>
-              Finalizar Tentativa
-            </template>
-          </button>
-        </div>
-      </div>
-
-      <!-- Result Modal Glass -->
-      <div v-else-if="result" class="relative z-10 min-h-[70vh] flex items-center justify-center" key="result">
-        <GlassCard padding="none" class="text-center max-w-xl w-full shadow-2xl relative overflow-hidden result-appear">
-          
-          <!-- Celebration Particles -->
-          <div v-if="result.passed" class="absolute inset-0 overflow-hidden pointer-events-none z-0">
-            <div 
-              v-for="p in particles" 
-              :key="p.id"
-              class="absolute rounded-full motion-safe:animate-[particle-float_2.5s_ease-out_forwards]"
-              :style="{
-                left: `${p.x}%`,
-                top: `${p.y}%`,
-                width: `${p.size}px`,
-                height: `${p.size}px`,
-                backgroundColor: p.color,
-                animationDelay: `${p.delay}ms`,
-                opacity: 0
-              }"
-            ></div>
+    <!-- barra de envio fixa -->
+    <div v-if="quiz && !result && !loading" class="fixed bottom-0 inset-x-0 z-30 glass-surface !bg-[#0b0e16]/85 !border-x-0 !border-b-0">
+      <div class="max-w-3xl mx-auto px-4 md:px-8 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center gap-4">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm text-white/80 tabular-nums">{{ answeredCount }} de {{ questions.length }} respondidas</p>
+          <div class="mt-1.5 h-1 bg-white/10 rounded-full overflow-hidden max-w-xs">
+            <div class="h-full bg-accent-gold rounded-full transition-[width] duration-300" :style="{ width: `${questions.length ? (answeredCount / questions.length) * 100 : 0}%` }"></div>
           </div>
-          
-          <!-- Status color banner -->
-          <div class="h-1 w-full absolute top-0 left-0 z-10" :class="result.passed ? 'bg-accent-emerald' : 'bg-red-500/80'"></div>
-
-          <div class="p-12 relative z-10">
-            <!-- Animated Icon -->
-            <div 
-              class="w-28 h-28 mx-auto rounded-full flex items-center justify-center mb-8 result-icon-appear"
-              :class="result.passed ? 'bg-accent-emerald/20 text-accent-emerald shadow-[0_0_40px_rgba(46,111,94,0.3)]' : 'bg-red-500/10 text-red-400'"
-            >
-              <svg v-if="result.passed" class="w-14 h-14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-              </svg>
-              <svg v-else class="w-14 h-14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </div>
-            
-            <h2 class="text-4xl font-display font-black mb-4" :class="result.passed ? 'text-accent-emerald' : 'text-red-400'">
-              {{ result.passed ? 'Aprovado!' : 'Continue Estudando' }}
-            </h2>
-
-            <!-- Animated Score Counter -->
-            <div class="relative mb-8">
-              <p class="text-7xl font-black text-white tabular-nums tracking-tight">
-                {{ animatedScore }}<span class="text-4xl text-white/60">%</span>
-              </p>
-              <!-- Circular progress ring -->
-              <div class="w-32 h-32 mx-auto mt-4">
-                <svg viewBox="0 0 100 100" class="w-full h-full -rotate-90">
-                  <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="6" />
-                  <circle 
-                    cx="50" cy="50" r="42" fill="none" 
-                    :stroke="result.passed ? '#2E6F5E' : '#ef4444'" 
-                    stroke-width="6"
-                    stroke-linecap="round"
-                    :stroke-dasharray="`${(animatedScore / 100) * 263.9} 263.9`"
-                    class="transition-all duration-1000 ease-out"
-                  />
-                </svg>
-              </div>
-            </div>
-            
-            <p class="text-text-muted mb-10 text-lg leading-relaxed max-w-sm mx-auto">
-              {{ result.correctCount }} de {{ result.total }} corretas.
-              {{ result.passed ? 'Você atingiu a pontuação necessária. Excelente trabalho!' : `A nota mínima é ${quiz?.passingScorePercent}%. Revise o material e tente novamente.` }}
-            </p>
-
-            <div class="flex flex-col sm:flex-row gap-4 justify-center">
-              <button v-if="!result.passed" @click="resetQuiz" class="glass-surface text-white hover:bg-white/10 px-8 py-4 rounded-full font-bold focus-ring transition-colors">
-                Tentar Novamente
-              </button>
-              <RouterLink v-if="result.certificateCode" :to="`/certificados/${result.certificateCode}`" class="bg-accent-gold text-bg-base hover:brightness-110 px-8 py-4 rounded-full font-bold focus-ring transition-colors">
-                Ver meu certificado
-              </RouterLink>
-              <RouterLink v-else :to="course ? `/course/${course.slug}` : '/my-courses'" class="bg-accent-gold text-bg-base hover:brightness-110 px-8 py-4 rounded-full font-bold focus-ring transition-colors shadow-[0_0_20px_-5px_rgba(198,161,91,0.5)]">
-                Voltar ao curso
-              </RouterLink>
-            </div>
-          </div>
-        </GlassCard>
+        </div>
+        <p v-if="error" role="alert" class="hidden sm:block text-sm text-red-300">{{ error }}</p>
+        <button class="btn-gold shrink-0" :disabled="submitting || !areAllAnswered" @click="submitQuiz">
+          <Icon v-if="submitting" name="spinner" :size="16" />
+          {{ submitting ? 'Corrigindo…' : 'Enviar respostas' }}
+        </button>
       </div>
-    </Transition>
+    </div>
   </div>
 </template>
 

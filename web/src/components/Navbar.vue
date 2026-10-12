@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { useWindowScroll } from '@vueuse/core'
+import { onKeyStroke, useScrollLock, useWindowScroll } from '@vueuse/core'
+import { watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 
 const { y } = useWindowScroll()
@@ -9,6 +10,11 @@ const authStore = useAuthStore()
 const router = useRouter()
 const mobileMenuOpen = ref(false)
 const search = ref('')
+
+// Menu móvel: trava a rolagem do fundo e fecha com Esc
+const scrollLock = useScrollLock(typeof document !== 'undefined' ? document.body : null)
+watch(mobileMenuOpen, (open) => (scrollLock.value = open))
+onKeyStroke('Escape', () => (mobileMenuOpen.value = false))
 
 const logout = () => {
   authStore.logout()
@@ -40,7 +46,8 @@ const toggleMobile = () => {
         class="md:hidden text-white/80 hover:text-white transition-colors focus-ring rounded p-1"
         @click="toggleMobile"
         :aria-expanded="mobileMenuOpen"
-        aria-label="Menu"
+        aria-controls="menu-movel"
+        :aria-label="mobileMenuOpen ? 'Fechar menu' : 'Abrir menu'"
       >
         <svg v-if="!mobileMenuOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7h16M4 12h16M4 17h16" />
@@ -63,26 +70,26 @@ const toggleMobile = () => {
       <div class="hidden md:flex items-center justify-center gap-10 absolute left-1/2 -translate-x-1/2">
         <RouterLink 
           to="/cursos" 
-          class="text-[13px] font-medium tracking-wide text-white/70 hover:text-white transition-colors focus-ring rounded px-2 py-1 relative group"
+          class="text-[13px] font-medium tracking-wide text-white/70 hover:text-white transition-colors focus-ring rounded px-2 py-1 relative group nav-link"
         >
           Cursos
         </RouterLink>
         <RouterLink 
           to="/paths" 
-          class="text-[13px] font-medium tracking-wide text-white/70 hover:text-white transition-colors focus-ring rounded px-2 py-1 relative group"
+          class="text-[13px] font-medium tracking-wide text-white/70 hover:text-white transition-colors focus-ring rounded px-2 py-1 relative group nav-link"
         >
           Trilhas
         </RouterLink>
         <RouterLink 
           to="/my-courses" 
-          class="text-[13px] font-medium tracking-wide text-white/70 hover:text-white transition-colors focus-ring rounded px-2 py-1 relative group"
+          class="text-[13px] font-medium tracking-wide text-white/70 hover:text-white transition-colors focus-ring rounded px-2 py-1 relative group nav-link"
         >
           Área do Aluno
         </RouterLink>
         <RouterLink 
           v-if="authStore.isAdmin"
           to="/admin" 
-          class="text-[13px] font-medium tracking-wide text-accent-gold/90 hover:text-accent-gold transition-colors focus-ring rounded px-2 py-1 relative group"
+          class="text-[13px] font-medium tracking-wide text-accent-gold/90 hover:text-accent-gold transition-colors focus-ring rounded px-2 py-1 relative group nav-link"
         >
           Admin
         </RouterLink>
@@ -128,6 +135,7 @@ const toggleMobile = () => {
   <Transition name="mobile-menu">
     <div 
       v-if="mobileMenuOpen" 
+      id="menu-movel"
       class="fixed inset-0 z-40 pt-16 bg-black/95 backdrop-blur-3xl md:hidden overflow-y-auto"
     >
       <div class="flex flex-col px-8 py-8 space-y-6">

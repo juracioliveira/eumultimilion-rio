@@ -31,7 +31,11 @@ export const studentRoutes: FastifyPluginAsync = async (fastify) => {
 
     const result = [];
     for (const c of rows) {
-      result.push({ ...c, progress: await courseProgress(userId, c.id), certificateCode: certByCourse.get(c.id) ?? null });
+      const progress = await courseProgress(userId, c.id);
+      const [next] = progress.nextLessonId
+        ? await db.select({ title: lessons.title }).from(lessons).where(eq(lessons.id, progress.nextLessonId)).limit(1)
+        : [];
+      result.push({ ...c, progress: { ...progress, nextLessonTitle: next?.title ?? null }, certificateCode: certByCourse.get(c.id) ?? null });
     }
     return { courses: result };
   });

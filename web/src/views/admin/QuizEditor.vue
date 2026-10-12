@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import GlassCard from '../../components/ui/GlassCard.vue'
+import Icon from '../../components/ui/Icon.vue'
+import { useUiStore } from '../../stores/ui'
 import { api, apiError } from '../../lib/api'
 
 type Option = { optionText: string; isCorrect: boolean }
@@ -9,6 +11,7 @@ type Question = { questionText: string; type: 'single_choice' | 'multiple_choice
 
 const route = useRoute()
 const router = useRouter()
+const ui = useUiStore()
 const isNew = route.params.id === 'novo'
 const context = ref<'lesson' | 'course'>((route.query.context as 'lesson' | 'course') || 'lesson')
 const courseId = ref((route.query.courseId as string) || '')
@@ -74,6 +77,7 @@ const save = async () => {
     } else {
       await api.put(`/admin/quizzes/${route.params.id}`, payload)
     }
+    ui.toast('Quiz salvo')
     back()
   } catch (e) {
     error.value = apiError(e)
@@ -83,8 +87,10 @@ const save = async () => {
 }
 
 const remove = async () => {
-  if (!confirm('Excluir este quiz? O histórico de tentativas dos alunos também será removido.')) return
+  const ok = await ui.confirm({ title: 'Excluir este quiz?', message: 'O histórico de tentativas dos alunos também será removido.', confirmLabel: 'Excluir quiz', danger: true })
+  if (!ok) return
   await api.delete(`/admin/quizzes/${route.params.id}`)
+  ui.toast('Quiz excluído')
   back()
 }
 </script>
@@ -120,7 +126,7 @@ const remove = async () => {
       <div class="flex items-start gap-3">
         <span class="w-8 h-8 rounded-full bg-accent-gold/20 text-accent-gold flex items-center justify-center text-sm font-bold shrink-0">{{ qi + 1 }}</span>
         <textarea v-model="q.questionText" rows="2" class="field" placeholder="Enunciado da pergunta" :aria-label="`Pergunta ${qi + 1}`" required></textarea>
-        <button type="button" class="p-2 rounded-lg text-red-300 hover:bg-red-500/10" aria-label="Remover pergunta" @click="questions.splice(qi, 1)">✕</button>
+        <button type="button" class="icon-btn hover:!text-red-300 hover:!bg-red-500/10" :aria-label="`Remover pergunta ${qi + 1}`" @click="questions.splice(qi, 1)"><Icon name="trash" :size="16" /></button>
       </div>
       <div class="pl-11 space-y-3">
         <select v-model="q.type" class="field !w-auto !py-1.5" aria-label="Tipo de pergunta" @change="changeType(q)">
@@ -137,14 +143,14 @@ const remove = async () => {
             @change="setCorrect(q, oi)"
           >
           <input v-model="o.optionText" class="field !py-2" :placeholder="`Alternativa ${oi + 1}`" required>
-          <button type="button" class="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30" :disabled="q.options.length <= 2" aria-label="Remover alternativa" @click="q.options.splice(oi, 1)">✕</button>
+          <button type="button" class="icon-btn" :disabled="q.options.length <= 2" :aria-label="`Remover alternativa ${oi + 1}`" @click="q.options.splice(oi, 1)"><Icon name="x" :size="16" /></button>
         </div>
-        <button type="button" class="text-sm text-accent-gold font-semibold hover:text-white" @click="q.options.push({ optionText: '', isCorrect: false })">+ Alternativa</button>
+        <button type="button" class="inline-flex items-center gap-1.5 text-sm text-accent-gold font-semibold hover:text-white rounded focus-ring" @click="q.options.push({ optionText: '', isCorrect: false })"><Icon name="plus" :size="15" /> Alternativa</button>
         <p class="text-xs text-text-muted">Marque a(s) alternativa(s) correta(s) à esquerda.</p>
       </div>
     </GlassCard>
 
-    <button type="button" class="btn-glass" @click="questions.push(blankQuestion())">+ Adicionar pergunta</button>
+    <button type="button" class="btn-glass" @click="questions.push(blankQuestion())"><Icon name="plus" :size="16" /> Adicionar pergunta</button>
 
     <p v-if="error" role="alert" class="text-sm text-red-300">{{ error }}</p>
     <div class="flex flex-wrap gap-3 pt-4 border-t border-white/10">

@@ -4,12 +4,19 @@ import { RouterLink } from 'vue-router'
 import GlassButton from '../../components/ui/GlassButton.vue'
 import GlassCard from '../../components/ui/GlassCard.vue'
 import CourseCard from '../../components/CourseCard.vue'
+import CourseRow from '../../components/CourseRow.vue'
+import Icon from '../../components/ui/Icon.vue'
+import { useAuthStore } from '../../stores/auth'
 import { api } from '../../lib/api'
-import { formatPrice } from '../../lib/format'
+import { formatClock, formatPrice } from '../../lib/format'
 import type { CourseSummary } from '../../lib/types'
 
 type PathSummary = { id: string; slug: string; title: string; description: string | null; thumbnailUrl: string | null; courseCount: number }
 
+type HistoryItem = { lessonId: string; title: string; thumbnailUrl: string | null; courseThumbnailUrl: string | null; courseTitle: string; durationSeconds: number | null; watchedSeconds: number }
+
+const auth = useAuthStore()
+const history = ref<HistoryItem[]>([])
 const courses = ref<CourseSummary[]>([])
 const paths = ref<PathSummary[]>([])
 const loading = ref(true)
@@ -22,6 +29,7 @@ onMounted(async () => {
     ])
     courses.value = c.data.courses
     paths.value = p.data.paths
+    if (auth.isAuthenticated) history.value = (await api.get<{ history: HistoryItem[] }>('/student/continue-watching')).data.history
   } finally {
     loading.value = false
   }
@@ -71,7 +79,7 @@ const differentials = [
       
       <div class="relative z-10 w-full px-4 md:px-16 pb-28 max-w-7xl mx-auto flex flex-col items-start">
         <div class="inline-flex items-center gap-2 mb-6 hero-stagger" style="--stagger: 0">
-          <span class="w-2 h-2 rounded-full bg-accent-gold shadow-[0_0_12px_rgba(198,161,91,0.8)] animate-pulse"></span>
+          <span class="w-2 h-2 rounded-full bg-accent-gold"></span>
           <span class="text-xs font-bold text-accent-gold">{{ heroCourse?.category?.name ?? 'Em destaque' }}</span>
         </div>
         
@@ -95,38 +103,53 @@ const differentials = [
         </div>
       </div>
 
-      <!-- Scroll indicator -->
-      <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-text-muted/40 motion-safe:animate-bounce">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
-      </div>
-    </section>
+</section>
 
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- CATÁLOGO — Carrosséis por Categoria                    -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <section v-if="loading" class="max-w-[1400px] mx-auto px-4 md:px-16 mt-24 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-      <div v-for="i in 4" :key="i" class="skeleton-card aspect-[4/5] rounded-[28px] bg-white/5"></div>
-    </section>
-    <section v-for="cat in categories" :key="cat.slug" class="max-w-[1400px] mx-auto px-4 md:px-16 mt-24 section-reveal">
-      <div class="flex items-center justify-between mb-8">
-        <h2 class="text-3xl font-display font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-text-muted">
-          {{ cat.name }}
-        </h2>
-        <RouterLink :to="{ path: '/cursos', query: cat.slug === 'outros' ? {} : { categoria: cat.slug } }" class="text-accent-gold hover:text-white transition-colors text-sm font-bold flex items-center gap-1 group">
+    <div v-if="loading" class="max-w-[1400px] mx-auto px-4 md:px-16 mt-20 flex gap-6 overflow-hidden" aria-busy="true" aria-label="Carregando cursos">
+      <div v-for="i in 4" :key="i" class="skeleton-card shrink-0 w-[72%] sm:w-[300px] aspect-[4/5] rounded-[28px] bg-white/5"></div>
+    </div>
+
+    <!-- Continuar assistindo (logado) -->
+    <CourseRow v-if="history.length" title="Continuar assistindo">
+      <RouterLink
+        v-for="item in history"
+        :key="item.lessonId"
+        :to="`/aula/${item.lessonId}`"
+        class="snap-start shrink-0 w-[80%] sm:w-[360px] group rounded-2xl outline-none focus-ring"
+      >
+        <div class="relative aspect-video rounded-2xl overflow-hidden bg-black">
+          <img v-if="item.thumbnailUrl || item.courseThumbnailUrl" :src="(item.thumbnailUrl || item.courseThumbnailUrl)!" alt="" loading="lazy" class="w-full h-full object-cover opacity-70 group-hover:opacity-90 transition-opacity">
+          <span class="absolute inset-0 flex items-center justify-center">
+            <span class="w-12 h-12 rounded-full glass-surface flex items-center justify-center text-white group-hover:scale-105 transition-transform"><Icon name="play" :size="18" /></span>
+          </span>
+          <span v-if="item.durationSeconds" class="absolute bottom-0 inset-x-0 h-1 bg-white/15">
+            <span class="block h-full bg-accent-emerald" :style="{ width: `${Math.min(100, (item.watchedSeconds / item.durationSeconds) * 100)}%` }"></span>
+          </span>
+        </div>
+        <p class="mt-3 text-xs text-text-muted truncate">{{ item.courseTitle }}<template v-if="item.durationSeconds"> · faltam {{ formatClock(Math.max(0, item.durationSeconds - item.watchedSeconds)) }}</template></p>
+        <p class="font-semibold text-white truncate group-hover:text-accent-gold transition-colors">{{ item.title }}</p>
+      </RouterLink>
+    </CourseRow>
+
+    <!-- Catálogo por categoria (carrosséis estilo streaming) -->
+    <CourseRow v-for="cat in categories" :key="cat.slug" :title="cat.name">
+      <template #action>
+        <RouterLink :to="{ path: '/cursos', query: cat.slug === 'outros' ? {} : { categoria: cat.slug } }" class="text-sm font-semibold text-accent-gold hover:text-white transition-colors rounded focus-ring">
           Ver todos
-          <svg class="w-4 h-4 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
         </RouterLink>
+      </template>
+      <div v-for="course in cat.courses" :key="course.id" class="snap-start shrink-0 w-[72%] sm:w-[300px]">
+        <CourseCard :course="course" />
       </div>
-      
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <CourseCard v-for="course in cat.courses.slice(0, 8)" :key="course.id" :course="course" />
-      </div>
-    </section>
+    </CourseRow>
 
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- DIFERENCIAIS — 4 pilares                               -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <section class="max-w-6xl mx-auto px-8 md:px-16 py-32 section-reveal">
+    <section class="max-w-6xl mx-auto px-4 md:px-16 py-24 md:py-32">
       <div class="text-center mb-16">
         <h2 class="text-4xl md:text-5xl font-display font-black tracking-tight mb-4 text-transparent bg-clip-text bg-gradient-to-r from-white to-white/60">
           Por que a Multimilionário?
@@ -161,7 +184,7 @@ const differentials = [
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- TRILHAS — Preview                                      -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <section v-if="paths.length" class="max-w-6xl mx-auto px-4 md:px-16 pb-24 section-reveal">
+    <section v-if="paths.length" class="max-w-6xl mx-auto px-4 md:px-16 pb-24">
       <div class="text-center mb-16">
         <h2 class="text-4xl md:text-5xl font-display font-black tracking-tight mb-4 text-transparent bg-clip-text bg-gradient-to-r from-white to-white/60">
           Trilhas de Aprendizagem
@@ -200,7 +223,7 @@ const differentials = [
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- CTA FINAL — Urgência                                   -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <section class="relative py-32 overflow-hidden section-reveal">
+    <section class="relative py-32 overflow-hidden">
       <!-- Background -->
       <div class="absolute inset-0">
         <img :src="heroImage" alt="" class="w-full h-full object-cover opacity-15">
@@ -275,30 +298,6 @@ const differentials = [
   }
 }
 
-/* Section reveal on scroll using CSS animation trigger */
-.section-reveal {
-  opacity: 0;
-  transform: translateY(40px);
-  animation: sectionReveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  animation-timeline: view();
-  animation-range: entry 0% entry 40%;
-}
-
-@keyframes sectionReveal {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Fallback for browsers without scroll-driven animations */
-@supports not (animation-timeline: view()) {
-  .section-reveal {
-    opacity: 1;
-    transform: none;
-  }
-}
-
 .skeleton-card {
   animation: pulse 1.8s ease-in-out infinite;
 }
@@ -308,8 +307,7 @@ const differentials = [
 
 @media (prefers-reduced-motion: reduce) {
   .skeleton-card { animation: none; }
-  .hero-stagger,
-  .section-reveal {
+  .hero-stagger {
     opacity: 1;
     transform: none;
     animation: none;

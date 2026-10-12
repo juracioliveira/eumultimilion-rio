@@ -58,9 +58,9 @@ const logout = () => {
         </button>
         <span class="font-semibold">Admin</span>
       </header>
-      <main class="px-4 md:px-10 py-8 md:py-10 max-w-6xl">
+      <div class="px-4 md:px-10 py-8 md:py-10 max-w-6xl">
         <RouterView />
-      </main>
+      </div>
     </div>
   </div>
 </template>

@@ -14,7 +14,7 @@ export const pathRoutes: FastifyPluginAsync = async (fastify) => {
         slug: learningPaths.slug,
         description: learningPaths.description,
         thumbnailUrl: learningPaths.thumbnailUrl,
-        courseCount: sql<number>`(select count(*)::int from ${learningPathCourses} where ${learningPathCourses.learningPathId} = ${learningPaths.id})`,
+        courseCount: sql<number>`(select count(*)::int from learning_path_courses lpc where lpc.learning_path_id = learning_paths.id)`,
       })
       .from(learningPaths)
       .where(eq(learningPaths.published, true))

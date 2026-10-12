@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import GlassCard from '../../components/ui/GlassCard.vue'
+import PasswordInput from '../../components/ui/PasswordInput.vue'
+import { useUiStore } from '../../stores/ui'
 import { useAuthStore } from '../../stores/auth'
 import { api, apiError } from '../../lib/api'
 import { formatDate } from '../../lib/format'
@@ -9,11 +11,10 @@ import { formatDate } from '../../lib/format'
 type Cert = { type: 'course' | 'learning_path'; title: string; code: string; pdfUrl: string | null; issuedAt: string }
 
 const auth = useAuthStore()
+const ui = useUiStore()
 const name = ref(auth.user?.name ?? '')
 const currentPassword = ref('')
 const newPassword = ref('')
-const message = ref('')
-const error = ref('')
 const saving = ref(false)
 const certificates = ref<Cert[]>([])
 
@@ -23,8 +24,6 @@ onMounted(async () => {
 })
 
 const save = async () => {
-  message.value = ''
-  error.value = ''
   saving.value = true
   try {
     await auth.updateProfile({
@@ -33,9 +32,9 @@ const save = async () => {
     })
     currentPassword.value = ''
     newPassword.value = ''
-    message.value = 'Dados atualizados.'
+    ui.toast('Dados atualizados')
   } catch (e) {
-    error.value = apiError(e)
+    ui.toast(apiError(e), 'error')
   } finally {
     saving.value = false
   }
@@ -60,15 +59,13 @@ const save = async () => {
             <p class="text-sm font-semibold text-white">Alterar senha</p>
             <div>
               <label class="field-label" for="cur">Senha atual</label>
-              <input id="cur" v-model="currentPassword" type="password" autocomplete="current-password" class="field">
+              <PasswordInput id="cur" v-model="currentPassword" autocomplete="current-password" />
             </div>
             <div>
               <label class="field-label" for="new">Nova senha</label>
-              <input id="new" v-model="newPassword" type="password" autocomplete="new-password" minlength="8" class="field">
+              <PasswordInput id="new" v-model="newPassword" autocomplete="new-password" :minlength="8" />
             </div>
           </div>
-          <p v-if="error" role="alert" class="text-sm text-red-300">{{ error }}</p>
-          <p v-if="message" class="text-sm text-accent-emerald">{{ message }}</p>
           <button class="btn-gold" :disabled="saving">{{ saving ? 'Salvando…' : 'Salvar' }}</button>
         </form>
       </GlassCard>
@@ -84,7 +81,7 @@ const save = async () => {
         <li v-for="c in certificates" :key="c.code">
           <GlassCard padding="md" class="flex items-center justify-between gap-4">
             <div class="min-w-0">
-              <p class="text-xs text-accent-emerald font-semibold mb-1">{{ c.type === 'course' ? 'Curso' : 'Trilha' }} · {{ formatDate(c.issuedAt) }}</p>
+              <p class="text-xs text-emerald-soft font-semibold mb-1">{{ c.type === 'course' ? 'Curso' : 'Trilha' }} · {{ formatDate(c.issuedAt) }}</p>
               <p class="font-semibold text-white truncate">{{ c.title }}</p>
             </div>
             <div class="flex gap-2 shrink-0">

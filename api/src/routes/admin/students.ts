@@ -18,8 +18,8 @@ export const adminStudentRoutes: FastifyPluginAsync = async (fastify) => {
         email: users.email,
         role: users.role,
         createdAt: users.createdAt,
-        courses: sql<number>`(select count(*)::int from ${purchases} where ${purchases.userId} = ${users.id} and ${purchases.status} = 'paid')`,
-        certificates: sql<number>`(select count(*)::int from ${certificates} where ${certificates.userId} = ${users.id})`,
+        courses: sql<number>`(select count(*)::int from purchases p where p.user_id = users.id and p.status = 'paid')`,
+        certificates: sql<number>`(select count(*)::int from certificates c where c.user_id = users.id)`,
       })
       .from(users)
       .where(query.q ? or(ilike(users.name, `%${query.q}%`), ilike(users.email, `%${query.q}%`)) : undefined)

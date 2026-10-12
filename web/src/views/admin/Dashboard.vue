@@ -63,7 +63,7 @@ onMounted(async () => {
               <td class="px-5 py-3">{{ p.courseTitle }}</td>
               <td class="px-5 py-3 tabular-nums">{{ formatPrice(p.amountCents) }}</td>
               <td class="px-5 py-3">
-                <span class="text-xs font-semibold px-2 py-1 rounded-md" :class="p.status === 'paid' ? 'bg-accent-emerald/20 text-accent-emerald' : 'bg-white/10 text-white/70'">{{ statusLabel[p.status] ?? p.status }}</span>
+                <span class="text-xs font-semibold px-2 py-1 rounded-md" :class="p.status === 'paid' ? 'bg-accent-emerald/20 text-emerald-soft' : 'bg-white/10 text-white/70'">{{ statusLabel[p.status] ?? p.status }}</span>
               </td>
               <td class="px-5 py-3 text-text-muted whitespace-nowrap">{{ formatDate(p.createdAt) }}</td>
             </tr>

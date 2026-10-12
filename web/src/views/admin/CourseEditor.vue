@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, RouterLink, useRoute, useRouter } from 'vue-router'
+import { onKeyStroke, useEventListener } from '@vueuse/core'
+import Icon from '../../components/ui/Icon.vue'
+import { useUiStore } from '../../stores/ui'
 import * as tus from 'tus-js-client'
 import GlassCard from '../../components/ui/GlassCard.vue'
 import { api, apiError } from '../../lib/api'
@@ -20,6 +23,7 @@ type Course = {
 
 const route = useRoute()
 const router = useRouter()
+const ui = useUiStore()
 const courseId = route.params.id as string
 
 const course = ref<Course | null>(null)
@@ -29,8 +33,7 @@ const categories = ref<Category[]>([])
 const bunnyEnabled = ref(false)
 const form = ref({ title: '', slug: '', description: '', thumbnailUrl: '', categoryId: '__none', price: '0,00', published: false, featured: false, caktoCheckoutUrl: '', caktoProductId: '' })
 const saving = ref(false)
-const notice = ref('')
-const error = ref('')
+const savedSnapshot = ref('')
 const newModule = ref('')
 const newCategory = ref('')
 
@@ -50,21 +53,26 @@ const load = async () => {
     categoryId: x.categoryId ?? '__none', price: centsToReais(x.priceCents), published: x.published, featured: x.featured,
     caktoCheckoutUrl: x.caktoCheckoutUrl ?? '', caktoProductId: x.caktoProductId ?? '',
   }
+  savedSnapshot.value = JSON.stringify(form.value)
 }
 onMounted(load)
 
-const flash = (msg: string) => {
-  notice.value = msg
-  setTimeout(() => (notice.value = ''), 2500)
-}
+// Alterações não salvas nas informações do curso
+const dirty = computed(() => !!savedSnapshot.value && JSON.stringify(form.value) !== savedSnapshot.value)
+useEventListener(window, 'beforeunload', (e: BeforeUnloadEvent) => {
+  if (dirty.value) e.preventDefault()
+})
+onBeforeRouteLeave(async () => {
+  if (!dirty.value) return true
+  return ui.confirm({ title: 'Sair sem salvar?', message: 'As alterações nas informações do curso serão perdidas.', confirmLabel: 'Sair sem salvar', danger: true })
+})
 
 const run = async (fn: () => Promise<unknown>, okMsg?: string) => {
-  error.value = ''
   try {
     await fn()
-    if (okMsg) flash(okMsg)
+    if (okMsg) ui.toast(okMsg)
   } catch (e) {
-    error.value = apiError(e)
+    ui.toast(apiError(e), 'error')
   }
 }
 
@@ -80,6 +88,7 @@ const saveCourse = () =>
       })
       course.value = data.course
       form.value.slug = data.course.slug
+      savedSnapshot.value = JSON.stringify(form.value)
     } finally {
       saving.value = false
     }
@@ -91,14 +100,21 @@ const addCategory = () =>
     categories.value.push(data.category)
     form.value.categoryId = data.category.id
     newCategory.value = ''
-  })
+  }, 'Categoria criada')
 
-const deleteCourse = () => {
-  if (!confirm('Excluir este curso, todos os módulos, aulas e o progresso dos alunos? Certificados já emitidos continuam válidos.')) return
-  run(async () => {
-    await api.delete(`/admin/courses/${courseId}`)
-    router.push('/admin/cursos')
+const deleteCourse = async () => {
+  const ok = await ui.confirm({
+    title: `Excluir "${course.value?.title}"?`,
+    message: 'Módulos, aulas e o progresso dos alunos serão apagados. Certificados já emitidos continuam válidos.',
+    confirmLabel: 'Excluir curso',
+    danger: true,
   })
+  if (!ok) return
+  await run(async () => {
+    await api.delete(`/admin/courses/${courseId}`)
+    savedSnapshot.value = ''
+    router.push('/admin/cursos')
+  }, 'Curso excluído')
 }
 
 // ---------- módulos ----------
@@ -107,16 +123,17 @@ const addModule = () =>
     const { data } = await api.post<{ module: Module }>(`/admin/courses/${courseId}/modules`, { title: newModule.value })
     modules.value.push({ ...data.module, lessons: [] })
     newModule.value = ''
-  })
+  }, 'Módulo criado')
 
 const renameModule = (m: Module) => run(() => api.patch(`/admin/courses/modules/${m.id}`, { title: m.title }), 'Módulo renomeado.')
 
-const deleteModule = (m: Module) => {
-  if (!confirm(`Excluir o módulo "${m.title}" e suas ${m.lessons.length} aulas?`)) return
+const deleteModule = async (m: Module) => {
+  const ok = await ui.confirm({ title: `Excluir o módulo "${m.title}"?`, message: m.lessons.length ? `As ${m.lessons.length} aulas dele também serão excluídas.` : undefined, confirmLabel: 'Excluir', danger: true })
+  if (!ok) return
   run(async () => {
     await api.delete(`/admin/courses/modules/${m.id}`)
     modules.value = modules.value.filter((x) => x.id !== m.id)
-  })
+  }, 'Módulo excluído')
 }
 
 const persistOrder = () =>
@@ -148,6 +165,14 @@ const addLesson = (m: Module) =>
     openLesson(data.lesson)
   })
 
+onKeyStroke('Escape', () => {
+  if (editing.value && !ui.confirmRequest) editing.value = null
+})
+const lessonTitleInput = ref<HTMLInputElement | null>(null)
+watch(editing, (v, old) => {
+  if (v && !old) setTimeout(() => lessonTitleInput.value?.focus(), 50)
+})
+
 const openLesson = (l: Lesson) => {
   editing.value = { ...l, durationMinutes: l.durationSeconds ? String(Math.round(l.durationSeconds / 60)) : '' }
   uploadProgress.value = null
@@ -176,13 +201,14 @@ const replaceLesson = (lesson: Lesson) => {
   }
 }
 
-const deleteLesson = (m: Module, l: Lesson) => {
-  if (!confirm(`Excluir a aula "${l.title}"?`)) return
+const deleteLesson = async (m: Module, l: Lesson) => {
+  const ok = await ui.confirm({ title: `Excluir a aula "${l.title}"?`, message: 'O progresso dos alunos nesta aula também será removido.', confirmLabel: 'Excluir', danger: true })
+  if (!ok) return
   run(async () => {
     await api.delete(`/admin/courses/lessons/${l.id}`)
     m.lessons = m.lessons.filter((x) => x.id !== l.id)
     if (editing.value?.id === l.id) editing.value = null
-  })
+  }, 'Aula excluída')
 }
 
 /** Upload direto browser → Bunny Stream via TUS (o vídeo não passa pelo nosso servidor). */
@@ -228,15 +254,11 @@ const finalQuiz = computed(() => quizzes.value.find((q) => q.context === 'course
         <RouterLink to="/admin/cursos" class="text-sm text-text-muted hover:text-white">Cursos</RouterLink>
         <h1 class="text-3xl font-display font-black mt-1">{{ course.title }}</h1>
       </div>
-      <div class="flex gap-2">
-        <RouterLink :to="`/course/${course.slug}`" class="btn-glass">Ver página</RouterLink>
-        <button class="btn-gold" :disabled="saving" @click="saveCourse">{{ saving ? 'Salvando…' : 'Salvar curso' }}</button>
+      <div class="flex items-center gap-2">
+        <RouterLink :to="`/course/${course.slug}`" class="btn-glass"><Icon name="external" :size="16" /> Ver página</RouterLink>
+        <span v-if="dirty" class="hidden sm:flex items-center gap-2 text-sm text-amber-200/90"><span class="w-2 h-2 rounded-full bg-amber-300"></span>Alterações não salvas</span>
+        <button class="btn-gold" :disabled="saving || !dirty" @click="saveCourse"><Icon v-if="saving" name="spinner" :size="16" />{{ saving ? 'Salvando…' : 'Salvar curso' }}</button>
       </div>
-    </div>
-
-    <div class="fixed bottom-6 right-6 z-50 space-y-2" aria-live="polite">
-      <p v-if="notice" class="glass-surface rounded-xl px-4 py-3 text-sm text-accent-emerald">{{ notice }}</p>
-      <p v-if="error" role="alert" class="glass-surface rounded-xl px-4 py-3 text-sm text-red-300 max-w-sm">{{ error }}</p>
     </div>
 
     <!-- Dados do curso -->
@@ -307,28 +329,30 @@ const finalQuiz = computed(() => quizzes.value.find((q) => q.context === 'course
           <div class="flex items-center gap-2 p-4 border-b border-white/10">
             <span class="text-xs text-text-muted w-16 shrink-0">Módulo {{ mi + 1 }}</span>
             <input v-model="m.title" class="field !py-1.5 !bg-transparent !border-transparent hover:!border-white/10 focus:!border-accent-gold/60 font-semibold" :aria-label="`Título do módulo ${mi + 1}`" @change="renameModule(m)">
-            <button class="p-2 rounded-lg hover:bg-white/10 disabled:opacity-30" :disabled="mi === 0" aria-label="Mover módulo para cima" @click="moveModule(mi, -1)">↑</button>
-            <button class="p-2 rounded-lg hover:bg-white/10 disabled:opacity-30" :disabled="mi === modules.length - 1" aria-label="Mover módulo para baixo" @click="moveModule(mi, 1)">↓</button>
-            <button class="p-2 rounded-lg text-red-300 hover:bg-red-500/10" aria-label="Excluir módulo" @click="deleteModule(m)">✕</button>
+            <button class="icon-btn" :disabled="mi === 0" :aria-label="`Mover módulo ${m.title} para cima`" @click="moveModule(mi, -1)"><Icon name="chevron-up" :size="18" /></button>
+            <button class="icon-btn" :disabled="mi === modules.length - 1" :aria-label="`Mover módulo ${m.title} para baixo`" @click="moveModule(mi, 1)"><Icon name="chevron-down" :size="18" /></button>
+            <button class="icon-btn hover:!text-red-300 hover:!bg-red-500/10" :aria-label="`Excluir módulo ${m.title}`" @click="deleteModule(m)"><Icon name="trash" :size="17" /></button>
           </div>
           <ul>
             <li v-for="(l, li) in m.lessons" :key="l.id" class="flex items-center gap-2 px-4 py-2.5 border-b border-white/5 text-sm">
               <span class="text-xs text-text-muted w-6 tabular-nums">{{ li + 1 }}</span>
               <button class="flex-1 min-w-0 text-left truncate hover:text-accent-gold" @click="openLesson(l)">{{ l.title }}</button>
-              <span v-if="l.isFreePreview" class="hidden sm:inline text-[11px] text-accent-emerald">Grátis</span>
+              <span v-if="l.isFreePreview" class="hidden sm:inline text-[11px] text-emerald-soft">Grátis</span>
               <span v-if="lessonQuiz(l.id)" class="hidden sm:inline text-[11px] text-white/60">Quiz</span>
               <span class="hidden sm:inline text-[11px] text-text-muted w-20 text-right">{{ l.videoUrl ? 'Vídeo externo' : statusLabel[l.status] }}</span>
               <span class="text-xs text-text-muted w-12 text-right tabular-nums">{{ l.durationSeconds ? formatClock(l.durationSeconds) : '' }}</span>
-              <button class="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30" :disabled="li === 0" aria-label="Mover aula para cima" @click="moveLesson(m, li, -1)">↑</button>
-              <button class="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-30" :disabled="li === m.lessons.length - 1" aria-label="Mover aula para baixo" @click="moveLesson(m, li, 1)">↓</button>
-              <button class="p-1.5 rounded-lg text-red-300 hover:bg-red-500/10" aria-label="Excluir aula" @click="deleteLesson(m, l)">✕</button>
+              <button class="icon-btn" :disabled="li === 0" :aria-label="`Mover aula ${l.title} para cima`" @click="moveLesson(m, li, -1)"><Icon name="chevron-up" :size="17" /></button>
+              <button class="icon-btn" :disabled="li === m.lessons.length - 1" :aria-label="`Mover aula ${l.title} para baixo`" @click="moveLesson(m, li, 1)"><Icon name="chevron-down" :size="17" /></button>
+              <button class="icon-btn" :aria-label="`Editar aula ${l.title}`" @click="openLesson(l)"><Icon name="pencil" :size="16" /></button>
+              <button class="icon-btn hover:!text-red-300 hover:!bg-red-500/10" :aria-label="`Excluir aula ${l.title}`" @click="deleteLesson(m, l)"><Icon name="trash" :size="16" /></button>
             </li>
           </ul>
           <div class="p-3">
-            <button class="text-sm text-accent-gold font-semibold hover:text-white px-2 py-1" @click="addLesson(m)">+ Adicionar aula</button>
+            <button class="inline-flex items-center gap-1.5 text-sm text-accent-gold font-semibold hover:text-white px-2 py-1 rounded focus-ring" @click="addLesson(m)"><Icon name="plus" :size="16" /> Adicionar aula</button>
           </div>
         </GlassCard>
       </div>
+      <p v-if="!modules.length" class="rounded-2xl border border-dashed border-white/15 p-8 text-center text-text-muted">Comece criando o primeiro módulo do curso.</p>
       <form class="flex gap-2 mt-4" @submit.prevent="addModule">
         <input v-model="newModule" class="field md:max-w-sm" placeholder="Título do novo módulo" aria-label="Título do novo módulo" required>
         <button class="btn-glass shrink-0">Adicionar módulo</button>
@@ -346,7 +370,7 @@ const finalQuiz = computed(() => quizzes.value.find((q) => q.context === 'course
     </GlassCard>
 
     <div class="pt-6 border-t border-white/10">
-      <button class="btn-danger" @click="deleteCourse">Excluir curso</button>
+      <button class="btn-danger" @click="deleteCourse"><Icon name="trash" :size="16" /> Excluir curso</button>
     </div>
 
     <!-- Editor de aula -->
@@ -355,12 +379,12 @@ const finalQuiz = computed(() => quizzes.value.find((q) => q.context === 'course
         <div class="w-full max-w-xl h-full overflow-y-auto bg-bg-base border-l border-white/10 p-6 md:p-8" role="dialog" aria-modal="true" aria-label="Editar aula">
           <div class="flex items-center justify-between mb-6">
             <h2 class="text-xl font-display font-bold">Editar aula</h2>
-            <button class="p-2 rounded-full hover:bg-white/10" aria-label="Fechar" @click="editing = null">✕</button>
+            <button class="icon-btn" aria-label="Fechar editor de aula" @click="editing = null"><Icon name="x" :size="18" /></button>
           </div>
           <form class="space-y-5" @submit.prevent="saveLesson">
             <div>
               <label class="field-label" for="l-title">Título</label>
-              <input id="l-title" v-model="editing.title" class="field" required>
+              <input id="l-title" ref="lessonTitleInput" v-model="editing.title" class="field" required>
             </div>
             <div>
               <label class="field-label" for="l-desc">Resumo</label>

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import GlassCard from '../../components/ui/GlassCard.vue'
+import Icon from '../../components/ui/Icon.vue'
 import { api, apiError } from '../../lib/api'
 import { formatPrice } from '../../lib/format'
 
@@ -46,7 +47,7 @@ const create = async () => {
       <h1 class="text-3xl font-display font-black">Cursos</h1>
       <form class="flex gap-2 w-full md:w-auto" @submit.prevent="create">
         <input v-model="newTitle" class="field md:w-72" placeholder="Título do novo curso" aria-label="Título do novo curso" required>
-        <button class="btn-gold shrink-0" :disabled="creating">Criar curso</button>
+        <button class="btn-gold shrink-0" :disabled="creating"><Icon :name="creating ? 'spinner' : 'plus'" :size="16" /> Criar curso</button>
       </form>
     </div>
     <p v-if="error" role="alert" class="text-sm text-red-300 mb-4">{{ error }}</p>
@@ -62,14 +63,21 @@ const create = async () => {
             <img v-if="c.thumbnailUrl" :src="c.thumbnailUrl" alt="" class="w-20 h-14 rounded-lg object-cover shrink-0">
             <div v-else class="w-20 h-14 rounded-lg bg-white/5 shrink-0"></div>
             <div class="flex-1 min-w-0">
-              <p class="font-semibold text-white truncate">{{ c.title }}</p>
-              <p class="text-xs text-text-muted">
+              <div class="flex items-center gap-2 min-w-0">
+                <p class="font-semibold text-white truncate">{{ c.title }}</p>
+                <span v-if="c.featured" class="shrink-0 text-[11px] text-accent-gold">Destaque</span>
+              </div>
+              <p class="text-xs text-text-muted mt-0.5">
                 {{ c.categoryName ?? 'Sem categoria' }} · {{ c.lessonCount }} aulas · {{ c.students }} alunos · {{ formatPrice(c.priceCents) }}
               </p>
+              <span class="sm:hidden inline-block mt-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-md" :class="c.published ? 'bg-accent-emerald/20 text-emerald-soft' : 'bg-white/10 text-white/60'">
+                {{ c.published ? 'Publicado' : 'Rascunho' }}
+              </span>
             </div>
-            <span class="text-xs font-semibold px-2.5 py-1 rounded-md shrink-0" :class="c.published ? 'bg-accent-emerald/20 text-accent-emerald' : 'bg-white/10 text-white/60'">
+            <span class="hidden sm:inline text-xs font-semibold px-2.5 py-1 rounded-md shrink-0" :class="c.published ? 'bg-accent-emerald/20 text-emerald-soft' : 'bg-white/10 text-white/60'">
               {{ c.published ? 'Publicado' : 'Rascunho' }}
             </span>
+            <Icon name="chevron-right" :size="18" class="text-white/30 shrink-0" />
           </GlassCard>
         </RouterLink>
       </li>
